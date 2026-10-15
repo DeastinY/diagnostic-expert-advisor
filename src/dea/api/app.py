@@ -116,6 +116,11 @@ class DemoIn(BaseModel):
     name: str = "demo"
     n: int = 60
     mimic: bool = False
+    sites: int = 1
+
+
+class SiteIn(BaseModel):
+    column: str | None = None
 
 
 class ProcessingIn(BaseModel):
@@ -212,7 +217,7 @@ def create_app(
             report.save(target)
             shutil.rmtree(src, ignore_errors=True)
             return {"name": body.name, "report": report.to_dict()}
-        write_synthetic(target, n_encounters=body.n, name=body.name)
+        write_synthetic(target, n_encounters=body.n, name=body.name, sites=body.sites)
         return {"name": body.name}
 
     @app.post("/api/detect")
@@ -554,6 +559,84 @@ def create_app(
     @app.get("/api/cohorts/{name}/profile")
     def profile(name: str, where: Where = None) -> dict[str, Any]:
         return profile_cohort(_filtered(store.get(name), where)).to_dict()
+
+    @app.get("/api/cohorts/{name}/sites")
+    def sites(
+        name: str, where: Where = None, column: str | None = None, dark: bool = False
+    ) -> dict[str, Any]:
+        """Per-site comparison: profile table, checks and charts for one site column."""
+        from dea import charts
+        from dea.quality import detect_site_column, site_bins, site_checks, site_profile
+
+        full = store.get(name)
+        cohort = _filtered(full, where)
+        static = cohort.static
+        candidates = [
+            c
+            for c in static.columns
+            if c != "encounter_id"
+            and (static[c].dtype == pl.String or static[c].dtype.is_integer())
+            and 2 <= static[c].drop_nulls().n_unique() <= 50
+        ]
+        col = column or cohort.config.site_column or detect_site_column(static)
+        out: dict[str, Any] = {
+            "column": col,
+            "candidates": candidates,
+            "configured": full.config.site_column,
+        }
+        if not col or col not in static.columns:
+            return {**out, "profile": [], "checks": [], "charts": {}}
+        prof = site_profile(cohort, col)
+        found = site_checks(cohort, col, prof)
+        cfg = cohort.config
+        top = (
+            prof.group_by("variable")
+            .agg(pl.col("n_obs").sum().alias("n"))
+            .sort("n", descending=True)
+            .get_column("variable")
+            .to_list()[:12]
+        )
+        dist = charts.site_distributions(
+            site_bins(cohort, col, top), cfg.variable_labels, cfg.variable_units, dark=dark
+        )
+        cov = charts.site_matrix(
+            prof, "coverage", "Share of encounters with data", ".0%", cfg.variable_labels, dark=dark
+        )
+        iv = charts.site_matrix(
+            prof.with_columns((pl.col("interval_s") / 60).alias("interval_min")),
+            "interval_min",
+            "Typical sampling interval (min)",
+            ".0f",
+            cfg.variable_labels,
+            dark=dark,
+            domain=None,
+            log=True,
+        )
+        return {
+            **out,
+            "sizes": _records(
+                static.group_by(col)
+                .agg(pl.len().alias("n"))
+                .sort(["n", col], descending=[True, False])
+            ),
+            "profile": _records(prof),
+            "checks": [c.to_dict() for c in found],
+            "charts": {
+                "distributions": dist.to_dict() if dist is not None else None,
+                "coverage": cov.to_dict() if cov is not None else None,
+                "sampling": iv.to_dict() if iv is not None else None,
+            },
+        }
+
+    @app.put("/api/cohorts/{name}/site")
+    def set_site(name: str, body: SiteIn) -> dict[str, Any]:
+        cohort = store.get(name)
+        if body.column and body.column not in cohort.static.columns:
+            raise HTTPException(400, f"unknown static column {body.column!r}")
+        cohort.config.site_column = body.column or None
+        cohort.config.save(store.path(name) / "cohort.yaml")
+        store.invalidate(name)
+        return {"site_column": cohort.config.site_column}
 
     @app.get("/api/cohorts/{name}/checks")
     def checks(name: str) -> list[dict[str, Any]]:

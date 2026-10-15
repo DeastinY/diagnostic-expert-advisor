@@ -540,16 +540,26 @@ class Cohort:
         )
 
     def fix_values(
-        self, variable: str, where: str, expr: str | None = None, description: str = ""
+        self,
+        variable: str,
+        where: str,
+        expr: str | None = None,
+        description: str = "",
+        encounter_where: str | None = None,
     ) -> Cohort:
         """Rewrite (or drop) the observations of ``variable`` selected by ``where``.
 
         ``where`` and ``expr`` are SQL over the ``value`` column, e.g.
         ``fix_values("Temperature", "value > 50", "(value - 32) / 1.8")`` repairs Fahrenheit
-        rows; ``expr=None`` drops the selected rows. The fix is recorded in the config so the
-        provenance of stored values stays visible. Save the result to persist it.
+        rows; ``expr=None`` drops the selected rows; ``encounter_where`` is SQL over the static
+        table that limits the fix to some encounters (one site, one export). The fix is
+        recorded in the config so the provenance of stored values stays visible. Save the
+        result to persist it.
         """
         hit = (pl.col(VARIABLE) == variable) & pl.sql_expr(where)
+        if encounter_where:  # e.g. "site = 'Hospital B'": only that site's encounters
+            ids = self.static.filter(pl.sql_expr(encounter_where)).get_column(ENCOUNTER_ID)
+            hit = hit & pl.col(ENCOUNTER_ID).is_in(ids.implode())
         if expr is None:
             dynamic = self.dynamic.filter(~hit)
         else:
@@ -558,7 +568,13 @@ class Cohort:
             )
         config = self.config.model_copy(deep=True)
         config.value_fixes.append(
-            ValueFix(variable=variable, where=where, expr=expr, description=description)
+            ValueFix(
+                variable=variable,
+                where=where,
+                expr=expr,
+                description=description,
+                encounter_where=encounter_where,
+            )
         )
         return Cohort(
             self.static,

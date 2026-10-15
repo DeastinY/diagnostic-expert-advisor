@@ -420,12 +420,16 @@ def _finish(
             report.warnings.append(f"{orphan} static row(s) have no observations")
     if admission is not None and ADMISSION_TIME not in static.columns:
         static = static.join(collect(admission), on=ENCOUNTER_ID, how="left")
+    from dea.quality.sites import detect_site_column
+
     cohort = Cohort(
         static.sort(ENCOUNTER_ID),
         dynamic,
         events=events,
-        config=CohortConfig(name=name, source=source),
+        config=CohortConfig(name=name, source=source, site_column=detect_site_column(static)),
     )
+    if cohort.config.site_column:
+        report.mapping["site"] = cohort.config.site_column
     report.n_encounters = len(cohort)
     counts = cohort.variable_counts()
     report.n_variables = counts.height

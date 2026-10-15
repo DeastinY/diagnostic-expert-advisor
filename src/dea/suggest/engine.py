@@ -305,7 +305,13 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
             processing = a["processing"]
     out = cohort
     for f in fixes:
-        out = out.fix_values(f["variable"], f["where"], f.get("expr"), f.get("description", ""))
+        out = out.fix_values(
+            f["variable"],
+            f["where"],
+            f.get("expr"),
+            f.get("description", ""),
+            encounter_where=f.get("encounter_where"),
+        )
     if dedupe:
         out = out.dedupe()
     out = out.move_to_static([v for v in to_static if v in cohort.variables])
