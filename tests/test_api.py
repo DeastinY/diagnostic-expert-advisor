@@ -169,3 +169,18 @@ def test_advise_status_and_apply(client: TestClient) -> None:
     cfg = client.get("/api/cohorts/unit").json()["config"]
     assert cfg["processing"]["resample_every"] == "30m" and cfg["variable_map"]["MAP"] == "map"
     assert any(f["label"] == "Elderly" for f in cfg["filters"])
+
+
+def test_sites_endpoint(client: TestClient) -> None:
+    r = client.post("/api/cohorts/demo", json={"name": "multi", "n": 24, "sites": 3})
+    assert r.status_code == 201
+    r = client.get("/api/cohorts/multi/sites")
+    body = r.json()
+    assert body["column"] == "site" and body["configured"] == "site"
+    assert body["charts"]["distributions"] and body["charts"]["coverage"]
+    assert any(c["id"].startswith("site:unit:Temp") for c in body["checks"])
+    assert {row["site"] for row in body["profile"]} == {"Hospital A", "Hospital B", "Hospital C"}
+    r = client.put("/api/cohorts/multi/site", json={"column": "outcome"})
+    assert r.json()["site_column"] == "outcome"
+    assert client.get("/api/cohorts/multi/sites").json()["column"] == "outcome"
+    assert client.put("/api/cohorts/multi/site", json={"column": "nope"}).status_code == 400

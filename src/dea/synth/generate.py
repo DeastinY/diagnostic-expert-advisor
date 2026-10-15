@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -289,17 +290,65 @@ def _generate_batch(
     return pl.DataFrame(static_rows).sort(ENCOUNTER_ID), pl.concat(dynamics), pl.concat(events)
 
 
+SITES = ("Hospital A", "Hospital B", "Hospital C")
+# What differs per site, the way real multi-center exports do: B charts temperature in °F
+# and its monitors read MAP 15 mmHg higher; C exports vitals every 5 minutes instead of every
+# minute and never exports lactate or CRP. A is the reference.
+SITE_EFFECTS: dict[str, dict[str, Any]] = {
+    "Hospital B": {"fahrenheit": ["Temp"], "offset": {"MAP": 15.0}},
+    "Hospital C": {"drop": ["Lactate", "CRP"], "vitals_every_s": 300},
+}
+_VITALS = ("HR", "MAP", "SpO2", "RR")
+
+
+def _with_sites(
+    static: pl.DataFrame, dynamic: pl.DataFrame, sites: int
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Assign encounters to sites round-robin and apply :data:`SITE_EFFECTS`."""
+    names = [SITES[i % len(SITES)] if i < len(SITES) else f"Hospital {i + 1}" for i in range(sites)]
+    ids = static.get_column(ENCOUNTER_ID)
+    site = pl.Series("site", [names[i % sites] for i in range(len(ids))])
+    static = static.with_columns(site)
+    dynamic = dynamic.join(static.select(ENCOUNTER_ID, "site"), on=ENCOUNTER_ID, how="left")
+    value, var, s = pl.col(VALUE), pl.col(VARIABLE), pl.col("site")
+    keep = pl.lit(True)
+    for site_name, fx in SITE_EFFECTS.items():
+        if site_name not in names:
+            continue
+        here = s == site_name
+        for v in fx.get("fahrenheit", []):
+            value = pl.when(here & (var == v)).then(value * 1.8 + 32).otherwise(value)
+        for v, off in fx.get("offset", {}).items():
+            value = pl.when(here & (var == v)).then(value + off).otherwise(value)
+        if fx.get("drop"):
+            keep = keep & ~(here & var.is_in(fx["drop"]))
+        if fx.get("vitals_every_s"):
+            on_grid = (pl.col(TIME).dt.total_seconds() % fx["vitals_every_s"]) == 0
+            keep = keep & ~(here & var.is_in(_VITALS) & ~on_grid)
+    dynamic = dynamic.filter(keep).with_columns(value.alias(VALUE)).drop("site")
+    return static, dynamic
+
+
 def generate_cohort(
     n_encounters: int = 40,
     seed: int = 0,
     name: str = "synthetic",
     min_hours: float = 12,
     max_hours: float = 21 * 24,
+    sites: int = 1,
 ) -> Cohort:
-    """Generate ``n_encounters`` synthetic encounters in memory."""
+    """Generate ``n_encounters`` synthetic encounters in memory.
+
+    With ``sites > 1`` encounters are spread over that many hospitals with the systematic
+    differences of :data:`SITE_EFFECTS`, and the config names ``site`` as the site column.
+    """
     rng = np.random.default_rng(seed)
     static, dynamic, events = _generate_batch(rng, _ids(rng, n_encounters), min_hours, max_hours)
-    return Cohort(static, dynamic, events=events, config=default_config(name))
+    config = default_config(name)
+    if sites > 1:
+        static, dynamic = _with_sites(static, dynamic, sites)
+        config.site_column = "site"
+    return Cohort(static, dynamic, events=events, config=config)
 
 
 def write_synthetic(
@@ -310,18 +359,27 @@ def write_synthetic(
     batch_size: int = 200,
     min_hours: float = 12,
     max_hours: float = 21 * 24,
+    sites: int = 1,
 ) -> Path:
     """Generate a cohort of any size straight to disk, ``batch_size`` encounters at a time."""
     from dea.io.storage import write_cohort_batches
 
     rng = np.random.default_rng(seed)
     ids = _ids(rng, n_encounters)
-    batches = (
-        _generate_batch(rng, ids[i : i + batch_size], min_hours, max_hours)
-        for i in range(0, len(ids), batch_size)
-    )
+
+    def batches():  # noqa: ANN202
+        for i in range(0, len(ids), batch_size):
+            static, dynamic, events = _generate_batch(
+                rng, ids[i : i + batch_size], min_hours, max_hours
+            )
+            if sites > 1:
+                static, dynamic = _with_sites(static, dynamic, sites)
+            yield static, dynamic, events
+
     config = default_config(name or Path(path).name)
-    return write_cohort_batches(path, config, batches, n_encounters)
+    if sites > 1:
+        config.site_column = "site"
+    return write_cohort_batches(path, config, batches(), n_encounters)
 
 
 def write_legacy_csv_tree(cohort: Cohort, path: Path | str, every: str = "1m") -> Path:

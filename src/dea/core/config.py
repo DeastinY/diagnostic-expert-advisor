@@ -42,6 +42,9 @@ class ValueFix(BaseModel):
     expr: str | None = Field(
         default=None, description="SQL expression for the new value; None drops the rows"
     )
+    encounter_where: str | None = Field(
+        default=None, description="SQL condition over the static table limiting the encounters"
+    )
     description: str = ""
 
 
@@ -73,6 +76,10 @@ class CohortConfig(BaseModel):
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
     variable_map: dict[str, str] = Field(
         default_factory=dict, description="Source variable name -> canonical name, as applied"
+    )
+    site_column: str | None = Field(
+        default=None,
+        description="Static column naming the hospital/site/export an encounter came from",
     )
     variable_codes: dict[str, str] = Field(
         default_factory=dict, description="Variable -> LOINC code, when known"
