@@ -33,9 +33,10 @@ dependencies = [
 ui = ["streamlit>=1.45", "altair>=5.3"]
 explore = ["pygwalker>=0.4.9", "pandas>=2.0", "pyarrow>=15"]
 ai = ["openai>=1.50"]
+report = ["vl-convert-python>=1.6"]
 pandas = ["pandas>=2.0", "pyarrow>=15"]
 slurm = ["submitit>=1.5"]
-all = ["dea[ui,explore,ai,pandas,slurm]"]
+all = ["dea[ui,explore,ai,report,pandas,slurm]"]
 dev = ["dea[all]", "pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
