@@ -277,7 +277,7 @@ def group_boxplot(
             outliers=False,
             ticks=False,
         )
-        .encode(x=alt.X(f"{value}:Q"), y=y, color=color)
+        .encode(x=alt.X(f"{value}:Q", title=_label(title, unit)), y=y, color=color)
     )
     return _apply(alt.layer(points, box).properties(height=max(120, 42 * len(groups) + 30)), t)
 
