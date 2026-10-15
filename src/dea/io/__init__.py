@@ -11,6 +11,7 @@ from dea.io.importers import (
     read_table,
     scan_table,
 )
+from dea.io.mimic import import_mimic, is_mimic_dir
 from dea.io.storage import (
     CohortInfo,
     delete_cohort,
@@ -29,9 +30,11 @@ __all__ = [
     "detect",
     "import_csv_tree",
     "import_long",
+    "import_mimic",
     "import_path",
     "import_wide",
     "is_cohort_dir",
+    "is_mimic_dir",
     "list_cohorts",
     "load_cohort",
     "read_table",

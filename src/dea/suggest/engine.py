@@ -1,0 +1,401 @@
+"""Turn a profile into concrete, applicable suggestions."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+import polars as pl
+
+from dea.core.config import Rule
+from dea.core.model import ENCOUNTER_ID, TIME, Cohort, collect
+from dea.profile import CohortProfile, VariableProfile, profile_cohort
+from dea.suggest.vocab import Concept, load_dictionary
+
+Kind = Literal["harmonize", "static", "drop", "processing", "tag", "filter", "plot", "quality"]
+
+# canonical concept -> (tag label, feature aggregate, operator, threshold, description)
+CLINICAL_TAGS: list[tuple[str, str, str, str, float, str]] = [
+    ("pao2_fio2", "Severe ARDS", "min", "<", 100, "Horowitz index below 100 mmHg at any time"),
+    ("pao2_fio2", "Moderate ARDS", "min", "<", 200, "Horowitz index below 200 mmHg at any time"),
+    ("map", "Hypotension", "min", "<", 65, "Mean arterial pressure below 65 mmHg at any time"),
+    ("lactate", "Hyperlactatemia", "max", ">", 2, "Lactate above 2 mmol/L at any time"),
+    ("norepinephrine", "Vasopressors", "max", ">", 0, "Received norepinephrine"),
+    ("spo2", "Desaturation", "min", "<", 90, "SpO2 below 90% at any time"),
+    ("creatinine", "Raised creatinine", "max", ">", 1.5, "Creatinine above 1.5 mg/dL at any time"),
+    ("temperature", "Fever", "max", ">", 38.3, "Temperature above 38.3 °C at any time"),
+]
+PLOT_ROLES = ("vital_sign", "blood_gas", "ventilation", "medication")
+
+
+@dataclass
+class Suggestion:
+    id: str
+    kind: Kind
+    title: str
+    detail: str
+    action: dict[str, Any] | None = None
+    confidence: float = 1.0
+    variables: list[str] = field(default_factory=list)
+
+    @property
+    def applicable(self) -> bool:
+        return self.action is not None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.__dict__, "applicable": self.applicable}
+
+
+def _matches(variables: list[str]) -> dict[str, tuple[Concept, float]]:
+    d = load_dictionary()
+    out = {}
+    for v in variables:
+        m = d.match(v)
+        if m:
+            out[v] = m
+    return out
+
+
+def _fill_for(concept: Concept | None, prof: VariableProfile) -> str:
+    if concept:
+        return concept.fill
+    gap = prof.median_interval_s or 0
+    if gap and gap <= 300:
+        return "interpolate"
+    return "forward"
+
+
+def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Suggestion]:
+    """Rule-based suggestions for a cohort. Pure function of the cohort and its profile."""
+    profile = profile or profile_cohort(cohort)
+    cfg = cohort.config
+    out: list[Suggestion] = []
+    by_name = {v.name: v for v in profile.variables}
+    matches = _matches(list(by_name))
+    canonical_present = {c.name for c, _ in matches.values()}
+
+    # 1. harmonization
+    for var, (concept, score) in sorted(matches.items()):
+        if var == concept.name:
+            continue
+        out.append(
+            Suggestion(
+                id=f"rename:{var}",
+                kind="harmonize",
+                title=f"Rename '{var}' to '{concept.name}'",
+                detail=f"Recognized as {concept.label}"
+                + (f" ({concept.unit})" if concept.unit else "")
+                + f"; match confidence {score:.0%}.",
+                action={
+                    "rename": {var: concept.name},
+                    "label": {concept.name: concept.label},
+                    "unit": {concept.name: concept.unit},
+                },
+                confidence=round(score, 2),
+                variables=[var],
+            )
+        )
+
+    # 2. plausibility / units
+    for var, (concept, _) in matches.items():
+        prof = by_name[var]
+        if concept.range and prof.p01 is not None and prof.p99 is not None:
+            lo, hi = concept.range
+            if prof.p99 > hi * 1.5 or prof.p01 < lo / 1.5:
+                out.append(
+                    Suggestion(
+                        id=f"unit:{var}",
+                        kind="quality",
+                        title=f"'{var}' values look out of range for {concept.label}",
+                        detail=(
+                            f"1st-99th percentile {prof.p01:.3g}-{prof.p99:.3g}, expected within "
+                            f"{lo}-{hi} {concept.unit}. Check the unit or the mapping."
+                        ),
+                        confidence=0.7,
+                        variables=[var],
+                    )
+                )
+
+    # 3. static attributes recorded as time series; identifiers; constants
+    for var, prof in by_name.items():
+        concept = matches.get(var, (None, 0))[0]
+        static_like = "constant_per_encounter" in prof.flags or (
+            "single_observation" in prof.flags
+            and concept is not None
+            and concept.role == "demographic"
+        )
+        if static_like:
+            out.append(
+                Suggestion(
+                    id=f"static:{var}",
+                    kind="static",
+                    title=f"Move '{var}' to the static table",
+                    detail="Recorded once or never changes within an encounter; as a static column "
+                    "it can be used in filters directly.",
+                    action={"move_to_static": [var]},
+                    variables=[var],
+                )
+            )
+        elif (
+            "suspected_identifier" in prof.flags or "constant" in prof.flags
+        ) and var not in cfg.processing.drop_variables:
+            why = (
+                "looks like an identifier"
+                if "suspected_identifier" in prof.flags
+                else "is constant"
+            )
+            out.append(
+                Suggestion(
+                    id=f"drop:{var}",
+                    kind="drop",
+                    title=f"Exclude '{var}' from processing",
+                    detail=f"It {why} and carries no clinical signal.",
+                    action={"drop": [var]},
+                    variables=[var],
+                )
+            )
+
+    # 4. processing defaults
+    grid = profile.sampling.suggested_resample
+    overrides = {}
+    for var, prof in by_name.items():
+        concept = matches.get(var, (None, 0))[0]
+        fill = _fill_for(concept, prof)
+        if fill != "forward":
+            overrides[var] = fill
+    proc_action: dict[str, Any] = {"processing": {"fill": "forward", "fill_overrides": overrides}}
+    if grid and grid != cfg.processing.resample_every:
+        proc_action["processing"]["resample_every"] = grid
+    changes = (
+        (grid and grid != cfg.processing.resample_every)
+        or overrides != cfg.processing.fill_overrides
+        or cfg.processing.fill != "forward"
+    )
+    if changes:
+        n_int = sum(1 for v in overrides.values() if v == "interpolate")
+        n_zero = sum(1 for v in overrides.values() if v == "zero")
+        out.append(
+            Suggestion(
+                id="processing",
+                kind="processing",
+                title=(
+                    f"Resample to a {grid or cfg.processing.resample_every or 'raw'} grid, "
+                    f"forward-fill labs, interpolate {n_int} continuous signal(s)"
+                    + (f", zero-fill {n_zero} infusion(s)" if n_zero else "")
+                ),
+                detail=(
+                    f"Typical sampling interval is {profile.sampling.median_interval_s or 0:.0f} s "
+                    f"({profile.sampling.regular_fraction or 0:.0%} regular). "
+                    "Fill strategies follow the variable role."
+                ),
+                action=proc_action,
+            )
+        )
+
+    # 5. tags from standard thresholds (use current variable names)
+    existing = {r.label for r in cfg.tags} | {r.label for r in cfg.filters}
+    concept_to_var = {c.name: v for v, (c, _) in matches.items()}
+    for concept_name, label, agg, op, threshold, desc in CLINICAL_TAGS:
+        var = concept_to_var.get(concept_name)
+        if not var or label in existing:
+            continue
+        out.append(
+            Suggestion(
+                id=f"tag:{label}",
+                kind="tag",
+                title=f"Tag '{label}'",
+                detail=desc,
+                action={
+                    "tag": {
+                        "label": label,
+                        "where": f'"{var}__{agg}" {op} {threshold}',
+                        "description": desc,
+                    }
+                },
+                variables=[var],
+            )
+        )
+    if "Short stay" not in existing:
+        out.append(
+            Suggestion(
+                id="tag:Short stay",
+                kind="tag",
+                title="Tag 'Short stay'",
+                detail="Less than three days",
+                action={
+                    "tag": {
+                        "label": "Short stay",
+                        "where": "los_hours < 72",
+                        "description": "Stay under 72 hours",
+                    }
+                },
+            )
+        )
+    for s in profile.static_columns:
+        if s.kind == "categorical" and s.top_values and len(s.top_values) <= 6:
+            for value, _ in s.top_values:
+                label = f"{s.name} = {value}"
+                if label in existing:
+                    continue
+                out.append(
+                    Suggestion(
+                        id=f"filter:{label}",
+                        kind="filter",
+                        title=f"Filter '{label}'",
+                        detail=f"Encounters with {s.name} equal to {value}.",
+                        action={
+                            "filter": {
+                                "label": label,
+                                "where": f"{s.name} = '{value}'",
+                                "description": "",
+                            }
+                        },
+                    )
+                )
+
+    # 6. default plots
+    if not cfg.plots:
+        plots = [
+            v
+            for v, (c, _) in sorted(matches.items(), key=lambda kv: -by_name[kv[0]].n_observations)
+            if c.role in PLOT_ROLES
+        ][:8]
+        if plots:
+            out.append(
+                Suggestion(
+                    id="plots",
+                    kind="plot",
+                    title="Chart the main signals by default",
+                    detail=", ".join(plots),
+                    action={"plots": plots},
+                    variables=plots,
+                )
+            )
+
+    # 7. quality
+    empty = cohort.features().filter(pl.col("n_observations") == 0).height
+    if empty:
+        out.append(
+            Suggestion(
+                id="quality:empty",
+                kind="quality",
+                title=f"{empty} encounter(s) without observations",
+                detail="They appear in the static table only; consider excluding them.",
+                action={
+                    "filter": {
+                        "label": "Has observations",
+                        "where": "n_observations > 0",
+                        "description": "",
+                    }
+                },
+            )
+        )
+    negative = collect(
+        cohort.dynamic.filter(pl.col(TIME) < pl.duration(seconds=0)).select(pl.len())
+    ).item()
+    if negative:
+        out.append(
+            Suggestion(
+                id="quality:negative",
+                kind="quality",
+                title=f"{negative} observation(s) before admission",
+                detail=(
+                    "Negative time offsets usually mean the admission time is later than the "
+                    "first record."
+                ),
+                confidence=0.8,
+            )
+        )
+    low = [v.name for v in profile.variables if "low_coverage" in v.flags]
+    if low:
+        out.append(
+            Suggestion(
+                id="quality:coverage",
+                kind="quality",
+                title=f"{len(low)} variable(s) present in fewer than 10% of encounters",
+                detail=", ".join(low[:15]) + (" …" if len(low) > 15 else ""),
+                variables=low,
+                confidence=0.6,
+            )
+        )
+    _ = canonical_present
+    return out
+
+
+def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
+    """Apply the actions of the given suggestions; returns a new cohort (not yet saved)."""
+    renames: dict[str, str] = {}
+    labels: dict[str, str] = {}
+    units: dict[str, str] = {}
+    to_static: list[str] = []
+    drops: list[str] = []
+    rules_tag: list[Rule] = []
+    rules_filter: list[Rule] = []
+    plots: list[str] | None = None
+    processing: dict[str, Any] | None = None
+    for s in suggestions:
+        a = s.action or {}
+        renames.update(a.get("rename", {}))
+        labels.update(a.get("label", {}))
+        units.update({k: v for k, v in a.get("unit", {}).items() if v})
+        to_static += a.get("move_to_static", [])
+        drops += a.get("drop", [])
+        if "tag" in a:
+            rules_tag.append(Rule(**a["tag"]))
+        if "filter" in a:
+            rules_filter.append(Rule(**a["filter"]))
+        if "plots" in a:
+            plots = a["plots"]
+        if "processing" in a:
+            processing = a["processing"]
+    out = cohort.move_to_static([v for v in to_static if v in cohort.variables])
+    out = out.rename_variables(renames)
+    cfg = out.config
+    cfg.variable_labels.update(labels)
+    cfg.variable_units.update(units)
+    ren = lambda v: renames.get(v, v)  # noqa: E731
+    for v in drops:
+        if ren(v) not in cfg.processing.drop_variables:
+            cfg.processing.drop_variables.append(ren(v))
+    if processing:
+        if "resample_every" in processing:
+            cfg.processing.resample_every = processing["resample_every"]
+        if "fill" in processing:
+            cfg.processing.fill = processing["fill"]
+        if "fill_overrides" in processing:
+            cfg.processing.fill_overrides = {
+                ren(k): v for k, v in processing["fill_overrides"].items()
+            }
+    existing_tags = {r.label for r in cfg.tags}
+    existing_filters = {r.label for r in cfg.filters}
+    for r in rules_tag:
+        if r.label not in existing_tags:
+            cfg.tags.append(_renamed_rule(r, renames))
+    for r in rules_filter:
+        if r.label not in existing_filters:
+            cfg.filters.append(_renamed_rule(r, renames))
+    if plots is not None:
+        cfg.plots = [ren(v) for v in plots]
+    return out
+
+
+def _renamed_rule(rule: Rule, renames: dict[str, str]) -> Rule:
+    where = rule.where
+    for old, new in renames.items():
+        where = where.replace(f"{old}__", f"{new}__")
+    return Rule(label=rule.label, where=where, description=rule.description)
+
+
+def summarize(cohort: Cohort, suggestions: list[Suggestion]) -> pl.DataFrame:
+    rows = [
+        {"kind": s.kind, "title": s.title, "applicable": s.applicable, "confidence": s.confidence}
+        for s in suggestions
+    ]
+    return (
+        pl.DataFrame(rows)
+        if rows
+        else pl.DataFrame(schema={"kind": pl.String(), "title": pl.String()})
+    )
+
+
+__all__ = ["Suggestion", "suggest", "apply_suggestions", "summarize", "ENCOUNTER_ID"]

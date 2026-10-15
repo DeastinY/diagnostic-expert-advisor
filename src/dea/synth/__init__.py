@@ -6,5 +6,12 @@ from dea.synth.generate import (
     write_legacy_csv_tree,
     write_synthetic,
 )
+from dea.synth.mimic import write_mimic_demo
 
-__all__ = ["default_config", "generate_cohort", "write_legacy_csv_tree", "write_synthetic"]
+__all__ = [
+    "default_config",
+    "generate_cohort",
+    "write_legacy_csv_tree",
+    "write_mimic_demo",
+    "write_synthetic",
+]
