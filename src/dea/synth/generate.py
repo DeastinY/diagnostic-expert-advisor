@@ -152,6 +152,64 @@ def _encounter_events(
     ).with_columns(pl.duration(seconds=pl.col(TIME)).cast(EVENT_SCHEMA[TIME]).alias(TIME))
 
 
+NOTE_TEMPLATES = (
+    "Admitted with {dx}. Started {drug} {dose}. Chest x-ray shows {finding}. Plan: {plan}.",
+    "{dx} suspected; {drug} {dose} continued. Patient {status}. Lactate trending {trend}.",
+    "Weaning from ventilation after {dx}. {drug} stopped. {finding} on CT. Discussed with family.",
+    "Day {day}: {status}. {drug} {dose}. Blood cultures {culture}. Plan: {plan}.",
+)
+NOTE_FILL = {
+    "dx": [
+        "septic shock",
+        "community-acquired pneumonia",
+        "ARDS",
+        "acute kidney injury",
+        "cardiogenic shock",
+        "COPD exacerbation",
+        "pulmonary embolism",
+    ],
+    "drug": [
+        "norepinephrine",
+        "piperacillin-tazobactam",
+        "meropenem",
+        "propofol",
+        "heparin",
+        "furosemide",
+        "hydrocortisone",
+    ],
+    "dose": ["0.1 mcg/kg/min", "4.5 g q8h", "1 g q8h", "50 mg/h", "5000 IU", "40 mg", "200 mg/day"],
+    "finding": ["bilateral infiltrates", "pleural effusion", "no acute changes", "consolidation"],
+    "plan": [
+        "continue antibiotics",
+        "lung-protective ventilation",
+        "start CRRT",
+        "prone positioning",
+    ],
+    "status": ["hemodynamically stable", "febrile", "oliguric", "improving", "deteriorating"],
+    "trend": ["down", "up", "stable"],
+    "culture": ["pending", "negative", "positive for E. coli"],
+}
+
+
+def _encounter_notes(rng: np.random.Generator, eid: str, los_s: int) -> pl.DataFrame:
+    """Daily free-text notes with templated clinical language (synthetic, not real notes)."""
+    days = max(1, los_s // 86400)
+    times, values = [], []
+    for day in range(days):
+        tpl = NOTE_TEMPLATES[int(rng.integers(0, len(NOTE_TEMPLATES)))]
+        fill = {k: str(rng.choice(v)) for k, v in NOTE_FILL.items()}
+        values.append(tpl.format(day=day + 1, **fill))
+        times.append(day * 86400 + 8 * 3600)
+    return pl.DataFrame(
+        {
+            ENCOUNTER_ID: eid,
+            TIME: pl.Series(times).cast(pl.Int64()),
+            VARIABLE: "Note",
+            VALUE: values,
+        }
+    ).with_columns(pl.duration(seconds=pl.col(TIME)).cast(EVENT_SCHEMA[TIME]).alias(TIME))
+
+
 def default_config(name: str = "synthetic") -> CohortConfig:
     """Config with clinically flavoured filters, tags and plots for the synthetic cohort."""
     return CohortConfig(
@@ -227,6 +285,7 @@ def _generate_batch(
         )
         dynamics.append(_encounter_long(rng, eid, severity, los_s))
         events.append(_encounter_events(rng, eid, severity, los_s))
+        events.append(_encounter_notes(rng, eid, los_s))
     return pl.DataFrame(static_rows).sort(ENCOUNTER_ID), pl.concat(dynamics), pl.concat(events)
 
 

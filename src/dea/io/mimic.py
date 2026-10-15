@@ -4,6 +4,7 @@ Expected files below the root (``.csv`` or ``.csv.gz``)::
 
     icu/icustays   icu/chartevents   icu/d_items
     hosp/patients  hosp/admissions   hosp/labevents   hosp/d_labitems   (labs optional)
+    note/discharge note/radiology                                       (MIMIC-IV-Note, optional)
 
 Each ICU stay becomes an encounter. ``time`` is the offset from ``intime``; ``intime`` is kept
 as ``admission_time``. Chart and lab items are named by their dictionary label; numeric rows
@@ -153,6 +154,29 @@ def import_mimic(path: Path | str, name: str | None = None) -> tuple[Cohort, Imp
         unit_sources.append(labs.select(VARIABLE, "valueuom"))
     else:
         report.warnings.append("hosp/labevents not found; lab values skipped")
+
+    for rel, label in (
+        ("note/discharge", "Discharge note"),
+        ("note/radiology", "Radiology report"),
+    ):
+        notes = _scan(root, rel, required=False)
+        if notes is None:
+            continue
+        note_events = (
+            notes.select("hadm_id", "charttime", "text")
+            .join(window, on="hadm_id", how="inner")
+            .with_columns(
+                (pl.col("charttime") - pl.col(ADMISSION_TIME)).cast(LONG_SCHEMA[TIME]).alias(TIME)
+            )
+            .filter(pl.col("text").is_not_null())
+            .select(
+                ENCOUNTER_ID,
+                TIME,
+                pl.lit(label).alias(VARIABLE),
+                pl.col("text").cast(pl.String()).alias(VALUE),
+            )
+        )
+        events_list.append(note_events.select(list(EVENT_SCHEMA)))
 
     units = collect(
         pl.concat(unit_sources)

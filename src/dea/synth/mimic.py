@@ -178,18 +178,22 @@ def write_mimic_demo(path: Path | str, n_stays: int = 50, seed: int = 0) -> Path
         pl.lit("kg").alias("valueuom"),
         pl.lit(0, dtype=pl.Int64).alias("warning"),
     )
-    modes = events.join(key, on=ENCOUNTER_ID).select(
-        (pl.col("stay_id") - 20_000_000).alias("subject_id"),
-        (pl.col("stay_id") - 10_000_000).alias("hadm_id"),
-        "stay_id",
-        pl.lit(None, dtype=pl.Int64).alias("caregiver_id"),
-        (pl.col("intime") + pl.col(TIME)).alias("charttime"),
-        (pl.col("intime") + pl.col(TIME)).alias("storetime"),
-        pl.lit(VENT_MODE_ITEM[0], dtype=pl.Int64).alias("itemid"),
-        pl.col(VALUE).replace_strict(MODE_MAP).alias("value"),
-        pl.lit(None, dtype=pl.Float64).alias("valuenum"),
-        pl.lit("").alias("valueuom"),
-        pl.lit(0, dtype=pl.Int64).alias("warning"),
+    modes = (
+        events.filter(pl.col(VARIABLE) != "Note")
+        .join(key, on=ENCOUNTER_ID)
+        .select(
+            (pl.col("stay_id") - 20_000_000).alias("subject_id"),
+            (pl.col("stay_id") - 10_000_000).alias("hadm_id"),
+            "stay_id",
+            pl.lit(None, dtype=pl.Int64).alias("caregiver_id"),
+            (pl.col("intime") + pl.col(TIME)).alias("charttime"),
+            (pl.col("intime") + pl.col(TIME)).alias("storetime"),
+            pl.lit(VENT_MODE_ITEM[0], dtype=pl.Int64).alias("itemid"),
+            pl.col(VALUE).replace_strict(MODE_MAP).alias("value"),
+            pl.lit(None, dtype=pl.Float64).alias("valuenum"),
+            pl.lit("").alias("valueuom"),
+            pl.lit(0, dtype=pl.Int64).alias("warning"),
+        )
     )
     chartevents = pl.concat([chart, weight, modes]).sort("stay_id", "charttime", "itemid")
 
@@ -249,6 +253,23 @@ def write_mimic_demo(path: Path | str, n_stays: int = 50, seed: int = 0) -> Path
         }
     )
 
+    notes = (
+        events.filter(pl.col(VARIABLE) == "Note")
+        .join(key, on=ENCOUNTER_ID)
+        .sort("stay_id", TIME)
+        .with_row_index("note_seq", 1)
+        .select(
+            (pl.lit("10000000-DS-") + pl.col("note_seq").cast(pl.String)).alias("note_id"),
+            (pl.col("stay_id") - 20_000_000).alias("subject_id"),
+            (pl.col("stay_id") - 10_000_000).alias("hadm_id"),
+            pl.lit("DS").alias("note_type"),
+            "note_seq",
+            (pl.col("intime") + pl.col(TIME)).alias("charttime"),
+            (pl.col("intime") + pl.col(TIME)).alias("storetime"),
+            pl.col(VALUE).alias("text"),
+        )
+    )
+    _write(notes, root / "note" / "discharge.csv.gz")
     _write(pl.DataFrame(patients), root / "hosp" / "patients.csv.gz")
     _write(pl.DataFrame(admissions), root / "hosp" / "admissions.csv.gz")
     _write(pl.DataFrame(stays), root / "icu" / "icustays.csv.gz")
