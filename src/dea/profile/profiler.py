@@ -4,6 +4,10 @@ The profile answers the questions a researcher asks first: how often is each var
 measured, how complete is it, what range does it take, which columns look like identifiers
 or constants, and what grid should the data be resampled onto. It is also the *only* thing
 the optional AI advisor is allowed to see: aggregates, never patient rows.
+
+Counts, coverage, min, max, mean and std stream over the whole cohort. Quantiles, distinct
+counts and sampling intervals need whole groups in memory and are computed on a
+deterministic sample of encounters (``sampling.sampled_encounters`` says how many).
 """
 
 from __future__ import annotations
@@ -15,11 +19,12 @@ from typing import Any
 
 import polars as pl
 
-from dea.core.model import ENCOUNTER_ID, TIME, VALUE, VARIABLE, Cohort
+from dea.core.model import ENCOUNTER_ID, TIME, VALUE, VARIABLE, Cohort, collect
 from dea.core.time import format_duration, snap_to_ladder
 
 MIN_CATEGORY_COUNT = 5  # categories shown to the advisor need at least this many encounters
 MAX_CATEGORIES = 10
+INTERVAL_SAMPLE = 300  # encounters used for sampling-interval statistics
 
 
 @dataclass
@@ -45,10 +50,20 @@ class VariableProfile:
 
 
 @dataclass
+class EventProfile:
+    name: str
+    n_observations: int
+    n_encounters: int
+    coverage: float
+    n_unique: int
+    top_values: list[tuple[str, int]] = field(default_factory=list)
+
+
+@dataclass
 class StaticColumnProfile:
     name: str
     dtype: str
-    kind: str  # numeric | categorical | identifier | text | boolean | other
+    kind: str  # numeric | categorical | identifier | text | boolean | temporal | other
     n_missing: int
     n_unique: int
     min: float | None = None
@@ -64,6 +79,7 @@ class SamplingProfile:
     p90_interval_s: float | None
     regular_fraction: float | None
     suggested_resample: str | None
+    sampled_encounters: int = 0
 
 
 @dataclass
@@ -78,6 +94,7 @@ class CohortProfile:
     los_hours_max: float
     sampling: SamplingProfile
     variables: list[VariableProfile]
+    events: list[EventProfile]
     static_columns: list[StaticColumnProfile]
     warnings: list[str]
     generated_at: str = field(
@@ -97,6 +114,13 @@ class CohortProfile:
         ]
         return pl.DataFrame(rows, infer_schema_length=None) if rows else pl.DataFrame()
 
+    def events_frame(self) -> pl.DataFrame:
+        rows = [
+            {**asdict(e), "top_values": ", ".join(f"{v} ({n})" for v, n in e.top_values)}
+            for e in self.events
+        ]
+        return pl.DataFrame(rows, infer_schema_length=None) if rows else pl.DataFrame()
+
     def static_frame(self) -> pl.DataFrame:
         rows = []
         for s in self.static_columns:
@@ -110,8 +134,8 @@ class CohortProfile:
 
         Contains cohort-level counts, sampling statistics and per-column aggregates only.
         No encounter identifiers, no timestamps, no individual values; categorical labels
-        appear only for low-cardinality static columns where every shown category covers at
-        least :data:`MIN_CATEGORY_COUNT` encounters.
+        appear only where every shown category covers at least :data:`MIN_CATEGORY_COUNT`
+        encounters.
         """
 
         def r(x: float | None, nd: int = 3) -> float | None:
@@ -146,6 +170,16 @@ class CohortProfile:
                 }
                 for v in self.variables
             ],
+            "events": [
+                {
+                    "name": e.name,
+                    "n_observations": e.n_observations,
+                    "coverage": r(e.coverage),
+                    "n_unique": e.n_unique,
+                    "categories": [v for v, _ in e.top_values] or None,
+                }
+                for e in self.events
+            ],
             "static_columns": [
                 {
                     "name": s.name,
@@ -162,57 +196,76 @@ class CohortProfile:
         }
 
 
-def _variable_profiles(
-    cohort: Cohort, n_encounters: int
-) -> tuple[list[VariableProfile], pl.DataFrame]:
-    sorted_dyn = cohort.dynamic.sort(ENCOUNTER_ID, VARIABLE, TIME)
-    gaps = sorted_dyn.with_columns(
-        pl.col(TIME).diff().over([ENCOUNTER_ID, VARIABLE]).dt.total_seconds().alias("_gap")
-    )
-    per_encounter_unique = (
-        sorted_dyn.group_by(ENCOUNTER_ID, VARIABLE)
-        .agg(pl.col(VALUE).n_unique().alias("_nu"), pl.len().alias("_n"))
-        .group_by(VARIABLE)
-        .agg(
-            pl.col("_nu").max().alias("_max_unique_per_encounter"),
-            pl.col("_n").max().alias("_max_obs_per_encounter"),
+def _sample_ids(cohort: Cohort) -> list[str]:
+    ids = cohort.encounter_ids
+    step = max(1, len(ids) // INTERVAL_SAMPLE)
+    return ids[::step][:INTERVAL_SAMPLE]
+
+
+def _sample_stats(cohort: Cohort) -> tuple[pl.DataFrame, pl.Series, int]:
+    """Distribution, uniqueness and interval statistics from a sample of encounters.
+
+    These need whole groups in memory (quantiles, distinct counts, sorted gaps), so they are
+    computed on at most :data:`INTERVAL_SAMPLE` encounters; everything else streams.
+    """
+    ids = _sample_ids(cohort)
+    sample = collect(
+        cohort.sorted_dynamic()
+        .filter(pl.col(ENCOUNTER_ID).is_in(ids))
+        .with_columns(
+            pl.col(TIME).diff().over([ENCOUNTER_ID, VARIABLE]).dt.total_seconds().alias("_gap")
         )
     )
+    per_encounter = sample.group_by(ENCOUNTER_ID, VARIABLE).agg(
+        pl.col(VALUE).n_unique().alias("_nu"), pl.len().alias("_n")
+    )
     stats = (
-        gaps.group_by(VARIABLE)
+        sample.group_by(VARIABLE)
         .agg(
+            pl.col(VALUE).quantile(0.01).alias("p01"),
+            pl.col(VALUE).median().alias("median"),
+            pl.col(VALUE).quantile(0.99).alias("p99"),
+            pl.col(VALUE).n_unique().alias("n_unique"),
+            pl.len().alias("_n_sampled"),
+            ((pl.col(VALUE) - pl.col(VALUE).round(0)).abs().max() < 1e-9).alias("_integer"),
+            pl.col("_gap").median().alias("median_interval_s"),
+        )
+        .join(
+            per_encounter.group_by(VARIABLE).agg(
+                pl.col("_nu").max().alias("_max_unique"), pl.col("_n").max().alias("_max_obs")
+            ),
+            on=VARIABLE,
+            how="left",
+        )
+    )
+    return stats, sample.get_column("_gap").drop_nulls(), len(ids)
+
+
+def _variable_profiles(
+    cohort: Cohort, n_encounters: int
+) -> tuple[list[VariableProfile], pl.Series, int]:
+    exact = collect(
+        cohort.dynamic.group_by(VARIABLE).agg(
             pl.len().alias("n_observations"),
             pl.col(ENCOUNTER_ID).n_unique().alias("n_encounters"),
             pl.col(VALUE).min().alias("min"),
-            pl.col(VALUE).quantile(0.01).alias("p01"),
-            pl.col(VALUE).median().alias("median"),
-            pl.col(VALUE).mean().alias("mean"),
-            pl.col(VALUE).quantile(0.99).alias("p99"),
             pl.col(VALUE).max().alias("max"),
+            pl.col(VALUE).mean().alias("mean"),
             pl.col(VALUE).std().alias("std"),
-            pl.col(VALUE).n_unique().alias("n_unique"),
-            pl.col("_gap").median().alias("median_interval_s"),
-            ((pl.col(VALUE) - pl.col(VALUE).round(0)).abs().max() < 1e-9).alias("_integer"),
         )
-        .join(per_encounter_unique, on=VARIABLE, how="left")
-        .sort(VARIABLE)
-        .collect()
     )
+    sampled_stats, gaps, sampled = _sample_stats(cohort)
+    stats = exact.join(sampled_stats, on=VARIABLE, how="left")
     profiles = []
-    for row in stats.iter_rows(named=True):
+    for row in stats.sort(VARIABLE).iter_rows(named=True):
         flags: list[str] = []
         coverage = row["n_encounters"] / n_encounters if n_encounters else 0.0
-        if row["n_unique"] <= 1:
+        n_unique = row["n_unique"] or 0
+        if n_unique <= 1:
             flags.append("constant")
-        elif (
-            row["min"] is not None and row["min"] >= 0 and row["max"] <= 1 and row["n_unique"] <= 2
-        ):
+        elif row["min"] >= 0 and row["max"] <= 1 and n_unique <= 2:
             flags.append("binary")
-        if (
-            row["n_unique"] > 1
-            and row["_max_unique_per_encounter"] == 1
-            and row["_max_obs_per_encounter"] > 1
-        ):
+        if n_unique > 1 and row["_max_unique"] == 1 and (row["_max_obs"] or 0) > 1:
             flags.append("constant_per_encounter")
         if row["_integer"]:
             flags.append("integer")
@@ -220,11 +273,7 @@ def _variable_profiles(
             flags.append("low_coverage")
         if row["median_interval_s"] is not None and row["median_interval_s"] >= 86400:
             flags.append("sparse")
-        if (
-            row["_integer"]
-            and row["n_observations"] > 10
-            and row["n_unique"] == row["n_observations"]
-        ):
+        if row["_integer"] and (row["_n_sampled"] or 0) > 10 and n_unique == row["_n_sampled"]:
             flags.append("suspected_identifier")
         profiles.append(
             VariableProfile(
@@ -239,28 +288,55 @@ def _variable_profiles(
                 p99=row["p99"],
                 max=row["max"],
                 std=row["std"],
-                n_unique=int(row["n_unique"]),
+                n_unique=int(n_unique),
                 median_interval_s=row["median_interval_s"],
                 flags=flags,
             )
         )
-    gap_values = gaps.select("_gap").drop_nulls().collect().get_column("_gap")
-    return profiles, gap_values.to_frame()
+    return profiles, gaps, sampled
 
 
-def _sampling_profile(gaps: pl.Series) -> SamplingProfile:
+def _event_profiles(cohort: Cohort, n_encounters: int) -> list[EventProfile]:
+    stats = collect(
+        cohort.events.group_by(VARIABLE).agg(
+            pl.len().alias("n_observations"),
+            pl.col(ENCOUNTER_ID).n_unique().alias("n_encounters"),
+            pl.col(VALUE).n_unique().alias("n_unique"),
+        )
+    ).sort(VARIABLE)
+    tops = collect(
+        cohort.events.group_by(VARIABLE, VALUE)
+        .agg(pl.col(ENCOUNTER_ID).n_unique().alias("n"))
+        .filter(pl.col("n") >= MIN_CATEGORY_COUNT)
+    ).sort(["n", VALUE], descending=[True, False])
+    out = []
+    for row in stats.iter_rows(named=True):
+        top = tops.filter(pl.col(VARIABLE) == row[VARIABLE]).head(MAX_CATEGORIES)
+        out.append(
+            EventProfile(
+                name=row[VARIABLE],
+                n_observations=int(row["n_observations"]),
+                n_encounters=int(row["n_encounters"]),
+                coverage=round(row["n_encounters"] / n_encounters, 4) if n_encounters else 0.0,
+                n_unique=int(row["n_unique"]),
+                top_values=[(str(v), int(n)) for v, n in top.select(VALUE, "n").iter_rows()],
+            )
+        )
+    return out
+
+
+def _sampling_profile(gaps: pl.Series, sampled: int) -> SamplingProfile:
     if gaps.is_empty():
-        return SamplingProfile(None, None, None, None, None)
+        return SamplingProfile(None, None, None, None, None, sampled)
     median = float(gaps.median())
-    rounded = gaps.round(0)
-    mode_count = rounded.value_counts(sort=True).get_column("count")[0]
-    regular = float(mode_count) / gaps.len()
+    mode_count = gaps.round(0).value_counts(sort=True).get_column("count")[0]
     return SamplingProfile(
         median_interval_s=median,
         p10_interval_s=float(gaps.quantile(0.1)),
         p90_interval_s=float(gaps.quantile(0.9)),
-        regular_fraction=round(regular, 4),
+        regular_fraction=round(float(mode_count) / gaps.len(), 4),
         suggested_resample=snap_to_ladder(median),
+        sampled_encounters=sampled,
     )
 
 
@@ -272,18 +348,19 @@ def _static_profiles(static: pl.DataFrame) -> list[StaticColumnProfile]:
             continue
         s = static.get_column(name)
         dtype = s.dtype
-        n_missing = int(s.null_count())
         n_unique = int(s.drop_nulls().n_unique())
         prof = StaticColumnProfile(
-            name=name, dtype=str(dtype), kind="other", n_missing=n_missing, n_unique=n_unique
+            name=name,
+            dtype=str(dtype),
+            kind="other",
+            n_missing=int(s.null_count()),
+            n_unique=n_unique,
         )
         if dtype.is_numeric():
-            prof.kind = "numeric"
-            if n_unique == n and n > 20 and dtype.is_integer():
-                prof.kind = "identifier"
-            prof.min = _f(s.min())
-            prof.max = _f(s.max())
-            prof.mean = _f(s.mean())
+            prof.kind = (
+                "identifier" if n_unique == n and n > 20 and dtype.is_integer() else "numeric"
+            )
+            prof.min, prof.max, prof.mean = _f(s.min()), _f(s.max()), _f(s.mean())
         elif dtype == pl.Boolean:
             prof.kind = "boolean"
         elif dtype in (pl.String, pl.Categorical, pl.Enum):
@@ -315,15 +392,13 @@ def profile_cohort(cohort: Cohort) -> CohortProfile:
     """Compute a :class:`CohortProfile` for ``cohort``."""
     n_enc = len(cohort)
     summary = cohort.summary()
-    variables, gaps_frame = _variable_profiles(cohort, n_enc)
-    sampling = _sampling_profile(
-        gaps_frame.get_column("_gap") if gaps_frame.height else pl.Series([], dtype=pl.Int64)
-    )
+    variables, gaps, sampled = _variable_profiles(cohort, n_enc)
+    events = _event_profiles(cohort, n_enc)
+    sampling = _sampling_profile(gaps, sampled)
     statics = _static_profiles(cohort.static)
 
     warnings: list[str] = []
-    feats = cohort.features()
-    empty = feats.filter(pl.col("n_observations") == 0).height
+    empty = cohort.features().filter(pl.col("n_observations") == 0).height
     if empty:
         warnings.append(f"{empty} encounter(s) have no observations")
     for v in variables:
@@ -339,6 +414,9 @@ def profile_cohort(cohort: Cohort) -> CohortProfile:
     low = [v.name for v in variables if "low_coverage" in v.flags]
     if low:
         warnings.append(f"{len(low)} variable(s) are present in fewer than 10% of encounters")
+    for e in events:
+        if e.n_unique > 50 and e.n_unique > 0.5 * e.n_observations:
+            warnings.append(f"event '{e.name}' looks like free text; check for identifying content")
     for s in statics:
         if s.kind == "text":
             warnings.append(f"static column '{s.name}' is free text; check for identifying content")
@@ -356,6 +434,7 @@ def profile_cohort(cohort: Cohort) -> CohortProfile:
         los_hours_max=summary.los_hours_max,
         sampling=sampling,
         variables=variables,
+        events=events,
         static_columns=statics,
         warnings=warnings,
     )

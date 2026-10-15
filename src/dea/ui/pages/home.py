@@ -173,8 +173,10 @@ with col_new:
                 )
                 for w in report.warnings:
                     st.warning(w)
+                if report.event_columns:
+                    st.caption("String columns kept as events: " + ", ".join(report.event_columns))
                 if report.dropped_columns:
-                    st.caption("Dropped non-numeric columns: " + ", ".join(report.dropped_columns))
+                    st.caption("Dropped columns: " + ", ".join(report.dropped_columns))
                 st.page_link(
                     "pages/overview.py", label="Go to overview", icon=":material/arrow_forward:"
                 )

@@ -51,7 +51,8 @@ def test_legacy_tree_with_non_sequential_ids(tmp_path: Path) -> None:
     cohort, report = import_csv_tree(root)
     assert cohort.get("10423").static == {"age": 81}
     assert cohort.get("7").static == {"age": 33}
-    assert report.dropped_columns == ["note"]
+    assert report.event_columns == ["note"] and report.dropped_columns == []
+    assert cohort.get("10423").events.get_column("value").to_list() == ["a", "b", "c"]
     assert cohort.get("7").length_of_stay.total_seconds() == 300
 
 
@@ -103,7 +104,7 @@ def test_wide_table_with_hours_and_static_cols(cohort: Cohort, tmp_path: Path) -
     assert imported.get(eid).length_of_stay == small.get(eid).wide(every="1h")["time"].max()
 
 
-def test_import_wide_drops_text_columns_and_reports() -> None:
+def test_import_wide_keeps_text_columns_as_events() -> None:
     df = pl.DataFrame(
         {
             "id": ["x", "x", "y"],
@@ -114,9 +115,11 @@ def test_import_wide_drops_text_columns_and_reports() -> None:
         }
     )
     cohort, report = import_wide(df, "id", "minutes", "m")
-    assert report.dropped_columns == ["comment"]
+    assert report.event_columns == ["comment"] and report.dropped_columns == []
     assert cohort.variables == ["HR", "SpO2"]
     assert cohort.get("y").series("SpO2").height == 0  # 'n/a' became null and was dropped
+    assert cohort.get("y").events.get_column("value").to_list() == ["bad"]
+    assert report.n_events == 3
 
 
 def test_import_long_with_separate_static_and_orphans() -> None:
@@ -133,7 +136,8 @@ def test_import_long_with_separate_static_and_orphans() -> None:
     assert set(cohort.encounter_ids) == {"a", "b", "ghost"}
     assert cohort.get("b").static == {"age": None}
     assert cohort.get("b").n_observations == 1
-    assert any("non-numeric" in w for w in report.warnings)
+    assert report.n_events == 1  # the non-numeric 'x' became an event
+    assert cohort.get("b").events.get_column("value").to_list() == ["x"]
     assert any("no static row" in w for w in report.warnings)
     assert any("no observations" in w for w in report.warnings)
 

@@ -43,13 +43,19 @@ k2.metric(
     f"{100 * sp.regular_fraction:.0f}%" if sp.regular_fraction is not None else "n/a",
     help="Share of gaps equal to the most common gap",
 )
-k3.metric("Suggested grid", sp.suggested_resample or "n/a")
+k3.metric(
+    "Suggested grid",
+    sp.suggested_resample or "n/a",
+    help=f"Intervals measured on {sp.sampled_encounters} sampled encounters",
+)
 k4.metric("Current grid", cfg.processing.resample_every or "raw")
 
 for w in profile.warnings:
     st.warning(w, icon="⚠️")
 
-tab_vars, tab_static, tab_proc = st.tabs(["Variables", "Static columns", "Processing"])
+tab_vars, tab_events, tab_static, tab_proc = st.tabs(
+    ["Variables", "Events", "Static columns", "Processing"]
+)
 
 with tab_vars:
     vf = profile.variables_frame()
@@ -88,6 +94,14 @@ with tab_vars:
             ),
             width="stretch",
         )
+with tab_events:
+    ef = profile.events_frame()
+    if ef.height:
+        st.caption("String-valued observations such as ventilation modes or drug names.")
+        st.dataframe(ef.to_pandas(), width="stretch", hide_index=True)
+    else:
+        st.caption("No string-valued observations in this cohort.")
+
 with tab_static:
     sf = profile.static_frame()
     if sf.height:

@@ -22,6 +22,19 @@ dea import events.csv data/my_cohort --encounter-col stay_id --time-col charttim
     --variable-col itemid --value-col valuenum --time-unit datetime
 ```
 
+## Numbers, strings and timestamps
+
+Numeric columns (and numeric-looking strings) become **observations**. Other string columns
+become **events** with the same shape (`encounter_id, time, variable, value`), so ventilation
+modes, drug names or free-text flags are kept rather than dropped; the profiler lists them and
+flags high-cardinality ones that may contain identifying text. Columns of other types are
+dropped and reported.
+
+When the time column holds absolute timestamps, `time` becomes the offset from the encounter's
+first observation and the first timestamp is kept as an `admission_time` static column, so
+nothing is lost. Imports are lazy end to end: the source is scanned, not read, and streams to
+Parquet on save, so files larger than memory are fine.
+
 ## Wide table
 
 One row per encounter and time, one column per variable. Non-numeric columns are
