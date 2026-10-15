@@ -123,6 +123,7 @@ class ProcessingIn(BaseModel):
     aggregate: str = "mean"
     fill: str = "none"
     drop_variables: list[str] = Field(default_factory=list)
+    fill_overrides: dict[str, str] | None = None
 
 
 class ApplyIn(BaseModel):
@@ -131,6 +132,17 @@ class ApplyIn(BaseModel):
 
 class RenameIn(BaseModel):
     mapping: dict[str, str]
+
+
+class AdviseIn(BaseModel):
+    model: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+
+
+class AdviseApplyIn(BaseModel):
+    recommendation: dict[str, Any]
+    rename: bool = False
 
 
 # ------------------------------------------------------------------------- app
@@ -520,6 +532,54 @@ def create_app(
         apply_suggestions(cohort, chosen).save()
         store.invalidate(name)
         return {"applied": [s.id for s in chosen]}
+
+    @app.get("/api/cohorts/{name}/advise")
+    def advise_status(name: str, where: Where = None) -> dict[str, Any]:
+        from dea.advise import Advisor, AdvisorSettings
+
+        cohort = _filtered(store.get(name), where)
+        settings = AdvisorSettings.from_env()
+        try:
+            import openai  # noqa: F401
+
+            installed = True
+        except ImportError:
+            installed = False
+        return {
+            "installed": installed,
+            "configured": settings.configured,
+            "model": settings.model,
+            "base_url": settings.base_url,
+            "payload": Advisor.payload(profile_cohort(cohort)),
+        }
+
+    @app.post("/api/cohorts/{name}/advise")
+    def advise(name: str, body: AdviseIn, where: Where = None) -> dict[str, Any]:
+        from dea.advise import Advisor, AdvisorError
+
+        cohort = _filtered(store.get(name), where)
+        try:
+            rec = Advisor(model=body.model, base_url=body.base_url, api_key=body.api_key).recommend(
+                profile_cohort(cohort)
+            )
+        except AdvisorError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return rec.model_dump()
+
+    @app.post("/api/cohorts/{name}/advise/apply")
+    def advise_apply(name: str, body: AdviseApplyIn) -> dict[str, Any]:
+        from dea.advise import Recommendation
+
+        cohort = store.get(name)
+        rec = Recommendation.model_validate(body.recommendation)
+        cohort.config = rec.apply_to(cohort.config, cohort.variables)
+        if body.rename:
+            cohort = cohort.rename_variables(rec.variable_map(cohort.variables))
+            cohort.save()
+        else:
+            cohort.config.save(cohort.root / "cohort.yaml")
+        store.invalidate(name)
+        return {"variables": cohort.variables, "renamed": body.rename}
 
     @app.get("/api/cohorts/{name}/report", response_class=HTMLResponse)
     def report(name: str, where: Where = None) -> str:

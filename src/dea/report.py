@@ -2,7 +2,7 @@
 
 Produces a single file a clinician can open or forward without running anything. With
 ``dea[report]`` (vl-convert) charts are embedded as static SVG and the file works offline and
-prints; without it, charts load vega-embed from a CDN. Requires ``dea[ui]`` for Altair.
+prints; without it, charts load vega-embed from a CDN. Requires ``dea[web]`` for Altair.
 """
 
 from __future__ import annotations

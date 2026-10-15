@@ -5,7 +5,7 @@
 ![License](https://img.shields.io/github/license/jrc-combine/dea)
 
 DEA turns heterogeneous clinical time-series data into one structure and gives you
-profiles, views and analysis-ready frames in minutes.
+profiles, suggestions, views and analysis-ready frames in minutes.
 
 - **For clinicians:** drop in a table or a folder of CSVs, get a cohort overview, per-encounter
   views and a data-quality profile without writing code.
@@ -15,10 +15,10 @@ profiles, views and analysis-ready frames in minutes.
 - **Optional AI advisor:** recommendations on how to resample, fill and store the data, from
   any OpenAI-compatible endpoint, computed from aggregate statistics only.
 
-![Cohort overview](docs/img/overview.png)
 
-> DEA v2 is a clean rewrite (Polars, Parquet, Streamlit). The v1 Flask application lives in
-> the git history; its CSV layout can still be imported.
+> DEA v2 is a clean rewrite: Polars and Parquet underneath, a FastAPI backend and a React
+> frontend on top. The v1 Flask application lives in the git history; its CSV layout can still
+> be imported.
 
 ## Install
 
@@ -28,40 +28,70 @@ pip install "dea[all] @ git+https://github.com/JRC-COMBINE/DEA.git"
 pip install -e ".[all]"
 ```
 
-Extras: `ui` (Streamlit app), `explore` (PyGWalker drag-and-drop explorer), `ai` (advisor),
-`report` (offline HTML reports with embedded SVG charts), `pandas` (pandas interop),
-`slurm` (cluster backend). The core needs only Polars, pydantic
+Extras: `web` (FastAPI backend serving the web app), `ai` (advisor over any OpenAI-compatible
+endpoint), `report` (offline HTML reports with embedded SVG charts), `nlp-spacy`, `nlp-gliner`,
+`nlp-transformers`, `deid` (local NLP connectors), `pandas` (pandas interop), `slurm` (cluster
+backend). The core needs only Polars, pydantic
 and PyYAML.
 
 ## Five-minute tour
 
 ```bash
 dea synth data/demo --n 60      # a synthetic ICU cohort; no real patients involved
-dea info data/demo
-dea profile data/demo
-dea ui --data-dir data          # opens the app at http://localhost:8501
+dea suggest data/demo           # harmonization, processing, tags, quality findings
+dea serve --data-dir data       # web app at http://127.0.0.1:8000
 ```
 
 Have your own data? `dea detect my_export.csv` shows what DEA recognizes, then
 
 ```bash
 dea import my_export.csv data/my_cohort            # long or wide tables, csv/tsv/parquet
+dea import /path/to/mimic-iv-demo data/mimic       # MIMIC-IV layout (icu/, hosp/, note/)
 dea import /path/to/v1/cohort data/migrated        # the DEA v1 static.csv + <id>/dynamic.csv tree
 ```
 
-![Encounter view](docs/img/encounter.png)
 
-## What you get in minutes
+## The web app
 
-- **Overview**: stay lengths, variable coverage, tags, and cohort **trajectories** (median and
-  interquartile band of any variable by time since admission, optionally split by outcome,
-  sex or any static column).
-- **Encounters**: searchable list with tags, per-encounter small multiples, string events,
-  and a drag-and-drop explorer.
-- **Profile & advice**: sampling rates, coverage, distributions, red flags, and optional AI
-  recommendations including canonical variable names you can apply with one click.
-- **Compute**: run per-encounter jobs locally or on SLURM, export a modelling frame.
-- **Report**: `dea report data/demo report.html` writes a one-page HTML summary to share.
+`dea serve` starts a FastAPI backend and serves the React frontend (built into
+`frontend/dist`; run `npm install && npm run build` in `frontend/` from a checkout).
+
+- **Cohorts**: cards with lineage, import from a path or an upload with layout detection and
+  editable column mapping, or a demo cohort (optionally in MIMIC-IV layout).
+- **Overview**: stay lengths, coverage, tags, static and variable distributions, and
+  **trajectories** (median and interquartile band since admission, split by any static column).
+  Filters live in the URL, so every view is shareable.
+- **Encounters**: sortable, searchable list with tags; per-encounter small multiples and events.
+- **Build cohort**: condition builder over the feature catalog with live counts, save as filter
+  or tag, carve out a **sub-cohort** with its parent and rule recorded.
+- **Profile & suggestions**: sampling, coverage, distributions, red flags; grouped one-click
+  suggestions (harmonize names, move static attributes, processing defaults, clinical tags,
+  filters, charts, data quality); processing editor; optional AI advisor; entities from NLP.
+- **Report** and **Parquet export** of any filtered view.
+
+## MIMIC-IV
+
+`dea import <mimic-root>` reads the PhysioNet layout (`icu/icustays`, `icu/chartevents`,
+`icu/d_items`, `hosp/patients`, `hosp/admissions`, `hosp/labevents`, `hosp/d_labitems`,
+optional `note/discharge`): one encounter per ICU stay, items named by their dictionary labels,
+text values as events, labs attached to the stay window. `dea synth out --mimic --n 50` writes
+synthetic tables in the same layout for development without credentials.
+
+## Free text: local NLP connectors
+
+```bash
+dea nlp list                                      # which connectors are installed
+dea nlp install spacy --model en_core_web_sm      # models go to DEA_MODELS_DIR (~/.dea/models)
+dea nlp run data/demo --connector spacy --events Note
+dea nlp run data/demo --connector gliner --labels disease medication procedure
+dea nlp run data/demo --connector presidio        # PII detection; redaction via dea.nlp.redact_cohort
+```
+
+Connectors: spaCy (any pipeline, including scispaCy and medspaCy), GLiNER zero-shot NER,
+Hugging Face token classification, Presidio de-identification, and any OpenAI-compatible local
+LLM such as Ollama. All run locally; entities land in `derived/entities.parquet`, feed the
+Entities tab, and can become `mentions: <entity>` tags. Note that the default `torch` wheel is
+the CUDA build; install the CPU wheel from the PyTorch index if you do not have a GPU.
 
 ## In Python
 
@@ -141,8 +171,11 @@ pytest
 
 Alpha. Tested on synthetic data up to 2,000 encounters / 54 million observations (feature table
 in ~3 s, profile in ~4 s, single-encounter lookup in 20 ms, all under 2.5 GB); storage is
-designed for MIMIC-sized cohorts, see [`docs/architecture.md`](docs/architecture.md). The SLURM
-backend is implemented but not yet validated on a real cluster.
+designed for MIMIC-sized cohorts, see [`docs/architecture.md`](docs/architecture.md). The MIMIC
+importer is tested on synthetic MIMIC-shaped tables, not yet on the real demo. The GLiNER and
+transformer connectors are implemented against their documented APIs but their weights could
+not be downloaded in the development sandbox. The SLURM backend is not yet validated on a real
+cluster.
 
 ## License
 
