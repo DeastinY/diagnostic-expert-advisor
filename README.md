@@ -29,7 +29,8 @@ pip install -e ".[all]"
 ```
 
 Extras: `ui` (Streamlit app), `explore` (PyGWalker drag-and-drop explorer), `ai` (advisor),
-`pandas` (pandas interop), `slurm` (cluster backend). The core needs only Polars, pydantic
+`report` (offline HTML reports with embedded SVG charts), `pandas` (pandas interop),
+`slurm` (cluster backend). The core needs only Polars, pydantic
 and PyYAML.
 
 ## Five-minute tour

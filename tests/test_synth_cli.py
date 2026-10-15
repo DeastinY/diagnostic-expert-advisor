@@ -89,5 +89,11 @@ def test_report(cohort_dir: Path, tmp_path: Path) -> None:
     assert main(["report", str(cohort_dir), str(out)]) == 0
     text = out.read_text()
     assert "<title>unit · DEA report</title>" in text
-    assert "vegaEmbed('#los'" in text and "Heart rate" in text and "Ventilation_Mode" in text
+    assert "Heart rate" in text and "Ventilation_Mode" in text
+    try:
+        import vl_convert  # noqa: F401
+
+        assert "<svg" in text and "vegaEmbed" not in text  # self-contained, works offline
+    except ImportError:
+        assert "vegaEmbed('#los'" in text
     assert "ICU-" not in text  # no encounter ids in a shareable report
