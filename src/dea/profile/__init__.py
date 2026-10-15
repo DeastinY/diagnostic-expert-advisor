@@ -2,6 +2,7 @@
 
 from dea.profile.profiler import (
     CohortProfile,
+    EventProfile,
     SamplingProfile,
     StaticColumnProfile,
     VariableProfile,
@@ -10,6 +11,7 @@ from dea.profile.profiler import (
 
 __all__ = [
     "CohortProfile",
+    "EventProfile",
     "SamplingProfile",
     "StaticColumnProfile",
     "VariableProfile",

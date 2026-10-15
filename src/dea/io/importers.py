@@ -7,8 +7,12 @@ Three input shapes are understood:
 * **csv tree** - the DEA v1 layout: ``static.csv`` plus ``<id>/dynamic.csv`` per encounter.
 
 :func:`detect` guesses the shape and the key columns; :func:`import_path` applies the guess
-(or your overrides) and returns the cohort together with an :class:`ImportReport` that lists
-everything that was dropped or assumed.
+(or your overrides) and returns the cohort together with an :class:`ImportReport`.
+
+Everything is lazy: sources are scanned, not read, and the result streams to Parquet when
+the cohort is saved, so tables far larger than memory import fine. Numeric columns become
+observations, string columns become events, and absolute timestamps are kept as an
+``admission_time`` static column while ``time`` becomes the offset from admission.
 """
 
 from __future__ import annotations
@@ -21,10 +25,21 @@ from typing import Any, Literal
 import polars as pl
 
 from dea.core.config import CohortConfig
-from dea.core.model import ENCOUNTER_ID, LONG_SCHEMA, TIME, VALUE, VARIABLE, Cohort
+from dea.core.model import (
+    ENCOUNTER_ID,
+    EVENT_SCHEMA,
+    LONG_SCHEMA,
+    TIME,
+    VALUE,
+    VARIABLE,
+    Cohort,
+    collect,
+)
 
 TimeUnit = Literal["auto", "datetime", "s", "ms", "m", "h", "d"]
+ADMISSION_TIME = "admission_time"
 _UNIT_SECONDS = {"s": 1.0, "ms": 0.001, "m": 60.0, "h": 3600.0, "d": 86400.0}
+_SAMPLE_ROWS = 50_000
 
 _ENCOUNTER_HINT = re.compile(
     r"(encounter|stay|hadm|admission|case|patient|subject|visit|episode|^id$|_id$|^pid$)", re.I
@@ -52,7 +67,9 @@ class ImportReport:
     n_encounters: int = 0
     n_variables: int = 0
     n_observations: int = 0
+    n_events: int = 0
     mapping: dict[str, Any] = field(default_factory=dict)
+    event_columns: list[str] = field(default_factory=list)
     dropped_columns: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -64,10 +81,14 @@ class ImportReport:
             f"variables: {self.n_variables}",
             f"observations: {self.n_observations}",
         ]
+        if self.n_events:
+            lines.append(f"events (string-valued): {self.n_events}")
         if self.mapping:
             lines.append("mapping: " + ", ".join(f"{k}={v}" for k, v in self.mapping.items() if v))
+        if self.event_columns:
+            lines.append("string columns kept as events: " + ", ".join(self.event_columns))
         if self.dropped_columns:
-            lines.append("dropped non-numeric columns: " + ", ".join(self.dropped_columns))
+            lines.append("dropped columns: " + ", ".join(self.dropped_columns))
         lines.extend(f"warning: {w}" for w in self.warnings)
         return lines
 
@@ -86,32 +107,33 @@ class Detection:
     time_unit: TimeUnit = "auto"
     columns: list[str] = field(default_factory=list)
     dtypes: dict[str, str] = field(default_factory=dict)
-    n_rows: int | None = None
     notes: list[str] = field(default_factory=list)
 
 
 # ----------------------------------------------------------------------------- reading
 
 
-def read_table(path: Path | str, n_rows: int | None = None) -> pl.DataFrame:
-    """Read CSV/TSV/Parquet/JSON-lines into a DataFrame."""
+def scan_table(path: Path | str) -> pl.LazyFrame:
+    """Lazily scan CSV/TSV/Parquet/JSON-lines (gzip CSV included)."""
     p = Path(path)
     suffixes = "".join(p.suffixes).lower()
     if suffixes.endswith((".parquet", ".pq")):
-        df = pl.read_parquet(p)
-        return df.head(n_rows) if n_rows else df
+        return pl.scan_parquet(p)
     if suffixes.endswith((".jsonl", ".ndjson")):
-        df = pl.read_ndjson(p)
-        return df.head(n_rows) if n_rows else df
-    sep = "\t" if ".tsv" in suffixes else ","
-    return pl.read_csv(
+        return pl.scan_ndjson(p)
+    return pl.scan_csv(
         p,
-        separator=sep,
-        n_rows=n_rows,
+        separator="\t" if ".tsv" in suffixes else ",",
         infer_schema_length=10_000,
         try_parse_dates=True,
         null_values=["", "NA", "NaN", "nan", "NULL", "null", "None"],
     )
+
+
+def read_table(path: Path | str, n_rows: int | None = None) -> pl.DataFrame:
+    """Read a table (or its first ``n_rows``) into memory; used for previews and detection."""
+    lf = scan_table(path)
+    return (lf.head(n_rows) if n_rows else lf).collect()
 
 
 # --------------------------------------------------------------------------- detection
@@ -144,15 +166,14 @@ def _guess_time_unit(df: pl.DataFrame, time_col: str, encounter_col: str | None)
 
 
 def detect_table(df: pl.DataFrame, source: Path | str = "<frame>") -> Detection:
+    """Guess key columns and shape from a (sample of a) table."""
     det = Detection(
         source=Path(source),
         format="table",
         columns=df.columns,
         dtypes={c: str(t) for c, t in df.schema.items()},
-        n_rows=df.height,
     )
     cols = df.columns
-    # encounter column
     hinted = [c for c in cols if _ENCOUNTER_HINT.search(c) and not _TIME_HINT.search(c)]
     if hinted:
         det.encounter_col = hinted[0]
@@ -169,25 +190,21 @@ def detect_table(df: pl.DataFrame, source: Path | str = "<frame>") -> Detection:
             det.notes.append(
                 f"no id-like column name; guessed '{det.encounter_col}' by cardinality"
             )
-    # time column
     temporal = [c for c in cols if df.schema[c].is_temporal()]
     hinted_t = [c for c in cols if _TIME_HINT.search(c) and c != det.encounter_col]
     det.time_col = (hinted_t or temporal or [None])[0]
     if det.time_col is None:
         det.notes.append("no time column found")
-    # long vs wide
-    var_hint = [
-        c for c in cols if _VARIABLE_HINT.search(c) and c not in (det.encounter_col, det.time_col)
-    ]
-    val_hint = [
-        c for c in cols if _VALUE_HINT.search(c) and c not in (det.encounter_col, det.time_col)
-    ]
-    rest = [c for c in cols if c not in (det.encounter_col, det.time_col)]
+    keys = (det.encounter_col, det.time_col)
+    var_hint = [c for c in cols if _VARIABLE_HINT.search(c) and c not in keys]
+    val_hint = [c for c in cols if _VALUE_HINT.search(c) and c not in keys]
+    rest = [c for c in cols if c not in keys]
+    is_str = [df.schema[c] == pl.String for c in rest]
     if var_hint and val_hint:
         det.table_kind, det.variable_col, det.value_col = "long", var_hint[0], val_hint[0]
-    elif len(rest) == 2 and df.schema[rest[0]] == pl.String and df.schema[rest[1]].is_numeric():
+    elif len(rest) == 2 and is_str[0] and df.schema[rest[1]].is_numeric():
         det.table_kind, det.variable_col, det.value_col = "long", rest[0], rest[1]
-    elif len(rest) == 2 and df.schema[rest[1]] == pl.String and df.schema[rest[0]].is_numeric():
+    elif len(rest) == 2 and is_str[1] and df.schema[rest[0]].is_numeric():
         det.table_kind, det.variable_col, det.value_col = "long", rest[1], rest[0]
     else:
         det.table_kind = "wide"
@@ -204,9 +221,10 @@ def detect(path: Path | str) -> Detection:
     if p.is_dir():
         if is_cohort_dir(p):
             return Detection(source=p, format="dea")
-        if (p / "static.csv").exists() or any(
+        has_tree = (p / "static.csv").exists() or any(
             (d / "dynamic.csv").exists() for d in p.iterdir() if d.is_dir()
-        ):
+        )
+        if has_tree:
             return Detection(source=p, format="csv_tree", time_unit="m")
         tables = sorted(x for x in p.iterdir() if x.suffix.lower() in (".csv", ".tsv", ".parquet"))
         if len(tables) == 1:
@@ -217,105 +235,133 @@ def detect(path: Path | str) -> Detection:
     if not p.exists():
         raise FileNotFoundError(p)
     try:
-        sample = read_table(p, n_rows=50_000)
+        sample = read_table(p, n_rows=_SAMPLE_ROWS)
     except Exception as exc:
         return Detection(source=p, format="unknown", notes=[f"could not read table: {exc}"])
-    det = detect_table(sample, p)
-    det.n_rows = None  # sample only
-    return det
+    return detect_table(sample, p)
 
 
 # -------------------------------------------------------------------------- conversion
 
 
 def _to_duration(
-    df: pl.DataFrame, time_col: str, encounter_col: str, unit: TimeUnit, report: ImportReport
-) -> pl.DataFrame:
-    dtype = df.schema[time_col]
+    lf: pl.LazyFrame, time_col: str, encounter_col: str, unit: TimeUnit, report: ImportReport
+) -> tuple[pl.LazyFrame, pl.LazyFrame | None]:
+    """Add a ``time`` Duration column; returns the frame and, for timestamps, admission times."""
+    dtype = lf.collect_schema()[time_col]
     if unit == "auto":
-        unit = "datetime" if dtype.is_temporal() else _guess_time_unit(df, time_col, encounter_col)
+        sample = lf.select(encounter_col, time_col).head(_SAMPLE_ROWS).collect()
+        unit = (
+            "datetime" if dtype.is_temporal() else _guess_time_unit(sample, time_col, encounter_col)
+        )
         report.warnings.append(f"time unit guessed as '{unit}' for column '{time_col}'")
     if dtype == pl.Duration:
-        return df.with_columns(pl.col(time_col).cast(LONG_SCHEMA[TIME]).alias(TIME))
+        return lf.with_columns(pl.col(time_col).cast(LONG_SCHEMA[TIME]).alias(TIME)), None
     if unit == "datetime":
         if dtype == pl.String:
-            df = df.with_columns(pl.col(time_col).str.to_datetime(strict=False))
-            dtype = df.schema[time_col]
-        if dtype == pl.Date:
-            df = df.with_columns(pl.col(time_col).cast(pl.Datetime("us")))
-        if not df.schema[time_col].is_temporal():
+            lf = lf.with_columns(pl.col(time_col).str.to_datetime(strict=False))
+        elif dtype == pl.Date:
+            lf = lf.with_columns(pl.col(time_col).cast(pl.Datetime("us")))
+        if not lf.collect_schema()[time_col].is_temporal():
             raise ValueError(f"column '{time_col}' cannot be parsed as datetime")
-        return df.with_columns(
-            (pl.col(time_col) - pl.col(time_col).min().over(encounter_col))
-            .cast(LONG_SCHEMA[TIME])
-            .alias(TIME)
+        admission = lf.group_by(encounter_col).agg(pl.col(time_col).min().alias(ADMISSION_TIME))
+        lf = lf.join(admission, on=encounter_col, how="left").with_columns(
+            (pl.col(time_col) - pl.col(ADMISSION_TIME)).cast(LONG_SCHEMA[TIME]).alias(TIME)
         )
+        admission = admission.select(
+            pl.col(encounter_col).cast(pl.String()).alias(ENCOUNTER_ID), ADMISSION_TIME
+        )
+        return lf.drop(ADMISSION_TIME), admission
     if dtype == pl.String:
-        df = df.with_columns(pl.col(time_col).cast(pl.Float64(), strict=False))
-    if not df.schema[time_col].is_numeric():
+        lf = lf.with_columns(pl.col(time_col).cast(pl.Float64(), strict=False))
+    if not lf.collect_schema()[time_col].is_numeric():
         raise ValueError(f"column '{time_col}' is neither numeric nor datetime")
-    factor = _UNIT_SECONDS[unit]
-    return df.with_columns(
-        pl.duration(
-            seconds=(pl.col(time_col).cast(pl.Float64()) * factor).round(0).cast(pl.Int64())
-        )
-        .cast(LONG_SCHEMA[TIME])
-        .alias(TIME)
-    )
+    seconds = (pl.col(time_col).cast(pl.Float64()) * _UNIT_SECONDS[unit]).round(0).cast(pl.Int64())
+    return lf.with_columns(pl.duration(seconds=seconds).cast(LONG_SCHEMA[TIME]).alias(TIME)), None
+
+
+def _classify_columns(
+    lf: pl.LazyFrame, candidates: list[str], report: ImportReport
+) -> tuple[list[str], list[str]]:
+    """Split columns into numeric observations and string events, by dtype and a sample."""
+    schema = lf.collect_schema()
+    numeric, events = [], []
+    sample = None
+    for c in candidates:
+        dtype = schema[c]
+        if dtype.is_numeric() or dtype == pl.Boolean:
+            numeric.append(c)
+        elif dtype == pl.String:
+            if sample is None:
+                sample = lf.head(_SAMPLE_ROWS).collect()
+            col = sample.get_column(c)
+            casted = col.cast(pl.Float64(), strict=False)
+            if col.null_count() < col.len() and casted.null_count() - col.null_count() <= max(
+                1, col.len() // 100
+            ):
+                numeric.append(c)
+            else:
+                events.append(c)
+        else:
+            report.dropped_columns.append(c)
+    report.event_columns = events
+    return numeric, events
 
 
 def wide_to_long(
-    df: pl.DataFrame,
+    lf: pl.LazyFrame | pl.DataFrame,
     encounter_col: str,
     time_col: str,
     time_unit: TimeUnit = "auto",
     report: ImportReport | None = None,
     exclude: list[str] | None = None,
-) -> pl.DataFrame:
-    """Unpivot a wide table into the long schema, dropping non-numeric columns."""
+) -> tuple[pl.LazyFrame, pl.LazyFrame, pl.LazyFrame | None]:
+    """Unpivot a wide table into (observations, events, admission times), all lazy."""
     report = report or ImportReport(source="<frame>", format="table")
-    exclude = set(exclude or [])
-    df = df.filter(pl.col(encounter_col).is_not_null())
-    df = _to_duration(df, time_col, encounter_col, time_unit, report)
-    value_cols = []
-    for c in df.columns:
-        if c in (encounter_col, time_col, TIME) or c in exclude or c.startswith("Unnamed"):
-            continue
-        dtype = df.schema[c]
-        if dtype.is_numeric() or dtype == pl.Boolean:
-            value_cols.append(c)
-            continue
-        if dtype == pl.String:
-            casted = df.get_column(c).cast(pl.Float64(), strict=False)
-            if casted.null_count() <= df.get_column(c).null_count() + max(1, df.height // 100):
-                df = df.with_columns(casted.alias(c))
-                value_cols.append(c)
-                continue
-        report.dropped_columns.append(c)
-    if not value_cols:
-        raise ValueError("no numeric variable columns found")
-    long = (
-        df.select(
-            pl.col(encounter_col).cast(pl.String()).alias(ENCOUNTER_ID),
-            TIME,
-            *[pl.col(c).cast(pl.Float64()) for c in value_cols],
-        )
-        .unpivot(
-            index=[ENCOUNTER_ID, TIME], on=value_cols, variable_name=VARIABLE, value_name=VALUE
-        )
-        .filter(pl.col(VALUE).is_not_null() & pl.col(TIME).is_not_null())
+    lf = lf.lazy().filter(pl.col(encounter_col).is_not_null())
+    lf, admission = _to_duration(lf, time_col, encounter_col, time_unit, report)
+    skip = {encounter_col, time_col, TIME, *(exclude or [])}
+    candidates = [c for c in lf.collect_schema() if c not in skip and not c.startswith("Unnamed")]
+    numeric, events = _classify_columns(lf, candidates, report)
+    if not numeric and not events:
+        raise ValueError("no variable columns found")
+    key = [pl.col(encounter_col).cast(pl.String()).alias(ENCOUNTER_ID), pl.col(TIME)]
+    valid = pl.col(VALUE).is_not_null() & pl.col(TIME).is_not_null()
+    dynamic = (
+        lf.select(*key, *[pl.col(c).cast(pl.Float64(), strict=False) for c in numeric])
+        .unpivot(index=[ENCOUNTER_ID, TIME], on=numeric, variable_name=VARIABLE, value_name=VALUE)
+        .filter(valid)
+        .select(list(LONG_SCHEMA))
+        if numeric
+        else pl.LazyFrame(schema=LONG_SCHEMA)
     )
-    return long.select(list(LONG_SCHEMA))
+    event_lf = (
+        lf.select(*key, *[pl.col(c).cast(pl.String()) for c in events])
+        .unpivot(index=[ENCOUNTER_ID, TIME], on=events, variable_name=VARIABLE, value_name=VALUE)
+        .filter(valid)
+        .select(list(EVENT_SCHEMA))
+        if events
+        else pl.LazyFrame(schema=EVENT_SCHEMA)
+    )
+    return dynamic, event_lf, admission
 
 
 def _finish(
-    long: pl.DataFrame, static: pl.DataFrame | None, name: str, report: ImportReport, source: str
+    dynamic: pl.LazyFrame,
+    events: pl.LazyFrame,
+    static: pl.DataFrame | pl.LazyFrame | None,
+    admission: pl.LazyFrame | None,
+    name: str,
+    report: ImportReport,
+    source: str,
 ) -> Cohort:
-    ids = long.select(pl.col(ENCOUNTER_ID).unique()).sort(ENCOUNTER_ID)
+    ids = collect(
+        pl.concat([dynamic.select(ENCOUNTER_ID), events.select(ENCOUNTER_ID)]).unique()
+    ).sort(ENCOUNTER_ID)
     if static is None:
         static = ids
     else:
-        static = static.with_columns(pl.col(ENCOUNTER_ID).cast(pl.String()))
+        static = static.lazy().with_columns(pl.col(ENCOUNTER_ID).cast(pl.String())).collect()
         missing = ids.join(static, on=ENCOUNTER_ID, how="anti")
         if missing.height:
             report.warnings.append(
@@ -325,16 +371,24 @@ def _finish(
         orphan = static.join(ids, on=ENCOUNTER_ID, how="anti").height
         if orphan:
             report.warnings.append(f"{orphan} static row(s) have no observations")
-    config = CohortConfig(name=name, source=source)
-    cohort = Cohort(static.sort(ENCOUNTER_ID), long, config=config)
+    if admission is not None and ADMISSION_TIME not in static.columns:
+        static = static.join(collect(admission), on=ENCOUNTER_ID, how="left")
+    cohort = Cohort(
+        static.sort(ENCOUNTER_ID),
+        dynamic,
+        events=events,
+        config=CohortConfig(name=name, source=source),
+    )
     report.n_encounters = len(cohort)
-    report.n_variables = len(cohort.variables)
-    report.n_observations = long.height
+    counts = cohort.variable_counts()
+    report.n_variables = counts.height
+    report.n_observations = int(counts.get_column("n_observations").sum()) if counts.height else 0
+    report.n_events = int(collect(events.select(pl.len())).item())
     return cohort
 
 
 def import_wide(
-    df: pl.DataFrame,
+    df: pl.DataFrame | pl.LazyFrame,
     encounter_col: str,
     time_col: str,
     time_unit: TimeUnit = "auto",
@@ -354,23 +408,33 @@ def import_wide(
         format="table/wide",
         mapping={"encounter": encounter_col, "time": time_col, "time_unit": time_unit},
     )
+    lf = df.lazy()
     static_cols = static_cols or []
     if static_cols:
-        pulled = df.group_by(encounter_col).agg(
-            [pl.col(c).drop_nulls().first() for c in static_cols]
+        pulled = (
+            collect(
+                lf.group_by(encounter_col).agg(
+                    [pl.col(c).drop_nulls().first() for c in static_cols]
+                )
+            )
+            .rename({encounter_col: ENCOUNTER_ID})
+            .with_columns(pl.col(ENCOUNTER_ID).cast(pl.String()))
         )
-        pulled = pulled.rename({encounter_col: ENCOUNTER_ID})
         static = (
             pulled
             if static is None
-            else static.join(pulled, on=ENCOUNTER_ID, how="full", coalesce=True)
+            else static.with_columns(pl.col(ENCOUNTER_ID).cast(pl.String())).join(
+                pulled, on=ENCOUNTER_ID, how="full", coalesce=True
+            )
         )
-    long = wide_to_long(df, encounter_col, time_col, time_unit, report, exclude=static_cols)
-    return _finish(long, static, name, report, str(source)), report
+    dynamic, events, admission = wide_to_long(
+        lf, encounter_col, time_col, time_unit, report, static_cols
+    )
+    return _finish(dynamic, events, static, admission, name, report, str(source)), report
 
 
 def import_long(
-    df: pl.DataFrame,
+    df: pl.DataFrame | pl.LazyFrame,
     encounter_col: str,
     time_col: str,
     variable_col: str,
@@ -380,7 +444,7 @@ def import_long(
     name: str = "cohort",
     source: str = "<frame>",
 ) -> tuple[Cohort, ImportReport]:
-    """Import a long table (one row per observation)."""
+    """Import a long table (one row per observation). Non-numeric values become events."""
     report = ImportReport(
         source=str(source),
         format="table/long",
@@ -392,22 +456,32 @@ def import_long(
             "time_unit": time_unit,
         },
     )
-    df = df.filter(pl.col(encounter_col).is_not_null() & pl.col(variable_col).is_not_null())
-    df = _to_duration(df, time_col, encounter_col, time_unit, report)
-    values = df.get_column(value_col)
-    if not values.dtype.is_numeric():
-        casted = values.cast(pl.Float64(), strict=False)
-        lost = casted.null_count() - values.null_count()
-        if lost:
-            report.warnings.append(f"{lost} non-numeric value(s) in '{value_col}' were dropped")
-        df = df.with_columns(casted.alias(value_col))
-    long = df.select(
+    lf = df.lazy().filter(pl.col(encounter_col).is_not_null() & pl.col(variable_col).is_not_null())
+    lf, admission = _to_duration(lf, time_col, encounter_col, time_unit, report)
+    base = lf.select(
         pl.col(encounter_col).cast(pl.String()).alias(ENCOUNTER_ID),
         TIME,
         pl.col(variable_col).cast(pl.String()).alias(VARIABLE),
-        pl.col(value_col).cast(pl.Float64()).alias(VALUE),
-    ).filter(pl.col(VALUE).is_not_null() & pl.col(TIME).is_not_null())
-    return _finish(long, static, name, report, str(source)), report
+        pl.col(value_col).alias(VALUE),
+    ).filter(pl.col(TIME).is_not_null() & pl.col(VALUE).is_not_null())
+    if lf.collect_schema()[value_col].is_numeric():
+        dynamic = base.with_columns(pl.col(VALUE).cast(pl.Float64()))
+        events = pl.LazyFrame(schema=EVENT_SCHEMA)
+    else:
+        text = base.with_columns(pl.col(VALUE).cast(pl.String()))
+        numeric = pl.col(VALUE).cast(pl.Float64(), strict=False)
+        dynamic = text.filter(numeric.is_not_null()).with_columns(numeric)
+        events = text.filter(numeric.is_null())
+        report.event_columns = [f"{value_col} (non-numeric rows)"]
+    return _finish(
+        dynamic.select(list(LONG_SCHEMA)),
+        events.select(list(EVENT_SCHEMA)),
+        static,
+        admission,
+        name,
+        report,
+        str(source),
+    ), report
 
 
 def _read_legacy_static(path: Path, report: ImportReport) -> pl.DataFrame | None:
@@ -442,33 +516,30 @@ def import_csv_tree(
     root = Path(path)
     report = ImportReport(source=str(root), format="csv_tree", mapping={"time_unit": time_unit})
     static = _read_legacy_static(root, report)
-    parts = []
+    dynamics, events = [], []
     for enc_dir in sorted(d for d in root.iterdir() if d.is_dir()):
         file = enc_dir / "dynamic.csv"
         if not file.exists():
             continue
         try:
-            df = pl.read_csv(file, infer_schema_length=10_000)
+            lf = scan_table(file)
+            time_col = lf.collect_schema().names()[0]
+            lf = lf.with_columns(pl.lit(enc_dir.name).alias("__encounter"))
+            sub = ImportReport(source=str(file), format="csv_tree")
+            dyn, evt, _ = wide_to_long(lf, "__encounter", time_col, time_unit, sub)
         except Exception as exc:
-            report.warnings.append(f"could not read {file}: {exc}")
-            continue
-        time_col = df.columns[0]
-        df = df.with_columns(pl.lit(enc_dir.name).alias("__encounter"))
-        sub = ImportReport(source=str(file), format="csv_tree")
-        try:
-            long = wide_to_long(df, "__encounter", time_col, time_unit, sub)
-        except ValueError as exc:
             report.warnings.append(f"{enc_dir.name}: {exc}")
             continue
-        for c in sub.dropped_columns:
-            if c not in report.dropped_columns:
-                report.dropped_columns.append(c)
-        parts.append(long)
-    if not parts:
+        for c in sub.event_columns:
+            if c not in report.event_columns:
+                report.event_columns.append(c)
+        dynamics.append(dyn)
+        events.append(evt)
+    if not dynamics:
         raise ValueError(f"no <id>/dynamic.csv files found under {root}")
-    long = pl.concat(parts)
-    cohort = _finish(long, static, name or root.name, report, str(root))
-    cohort.config.processing.resample_every = None
+    cohort = _finish(
+        pl.concat(dynamics), pl.concat(events), static, None, name or root.name, report, str(root)
+    )
     return cohort, report
 
 
@@ -484,6 +555,7 @@ def import_path(
 
     p = Path(path)
     det = detection or detect(p)
+    static_cols = overrides.pop("static_cols", None)
     for key, value in overrides.items():
         if value is not None:
             setattr(det, key, value)
@@ -498,7 +570,7 @@ def import_path(
         return import_csv_tree(p, time_unit=unit, name=cohort_name)
     if det.format != "table":
         raise ValueError(f"cannot import {p}: {'; '.join(det.notes) or 'unknown layout'}")
-    df = read_table(p)
+    lf = scan_table(p)
     static = read_table(static_path) if static_path else None
     if static is not None and ENCOUNTER_ID not in static.columns:
         hinted = [c for c in static.columns if _ENCOUNTER_HINT.search(c)]
@@ -511,7 +583,7 @@ def import_path(
         if not det.variable_col or not det.value_col:
             raise ValueError("long tables need variable_col= and value_col=")
         return import_long(
-            df,
+            lf,
             det.encounter_col,
             det.time_col,
             det.variable_col,
@@ -522,12 +594,5 @@ def import_path(
             str(p),
         )
     return import_wide(
-        df,
-        det.encounter_col,
-        det.time_col,
-        det.time_unit,
-        static,
-        overrides.get("static_cols"),
-        cohort_name,
-        str(p),
+        lf, det.encounter_col, det.time_col, det.time_unit, static, static_cols, cohort_name, str(p)
     )

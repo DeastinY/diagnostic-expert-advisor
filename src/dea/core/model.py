@@ -365,6 +365,14 @@ class Cohort:
             for eid in wanted
         ]
 
+    def sorted_dynamic(self) -> pl.LazyFrame:
+        """Observations ordered by encounter and time.
+
+        Stored cohorts are already sorted on disk (each encounter sits in one time-sorted
+        file), so this is free for them; in-memory cohorts are small enough to sort.
+        """
+        return self.dynamic if self.root else self.dynamic.sort(ENCOUNTER_ID, TIME)
+
     def variable_counts(self) -> pl.DataFrame:
         """``variable`` and ``n_observations`` for every numeric variable, most frequent first."""
         counts = self.dynamic.group_by(VARIABLE).agg(pl.len().alias("n_observations"))
@@ -424,9 +432,9 @@ class Cohort:
         )
         selected = self.feature_variables()
         per_var = collect(
-            self.dynamic.filter(pl.col(VARIABLE).is_in(selected))
-            .sort(ENCOUNTER_ID, VARIABLE, TIME)
-            .group_by(ENCOUNTER_ID, VARIABLE, maintain_order=True)
+            self.sorted_dynamic()
+            .filter(pl.col(VARIABLE).is_in(selected))
+            .group_by(ENCOUNTER_ID, VARIABLE)
             .agg(
                 pl.col(VALUE).min().alias("min"),
                 pl.col(VALUE).max().alias("max"),

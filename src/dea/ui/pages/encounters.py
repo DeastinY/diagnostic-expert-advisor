@@ -91,6 +91,15 @@ if chosen:
 else:
     st.info("Pick at least one variable.")
 
+if enc.events.height:
+    with st.expander(f"Events ({enc.events.height} string-valued observations)"):
+        ev = enc.events.sort("time").with_columns(
+            (pl.col("time").dt.total_seconds() / 3600).round(2).alias("hours")
+        )
+        st.dataframe(
+            ev.select("hours", "variable", "value").to_pandas(), width="stretch", hide_index=True
+        )
+
 with st.expander("Data table & download"):
     wide = enc.wide(every=None if grid == "raw" else grid)
     st.dataframe(wide.head(500).to_pandas(), width="stretch", hide_index=True)

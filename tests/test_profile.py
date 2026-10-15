@@ -43,7 +43,16 @@ def test_prompt_payload_contains_no_patient_level_data(cohort: Cohort) -> None:
     for eid in cohort.encounter_ids:
         assert eid not in text
     payload = prof.to_prompt_dict()
-    assert set(payload) == {"cohort", "sampling", "variables", "static_columns", "warnings"}
+    assert set(payload) == {
+        "cohort",
+        "sampling",
+        "variables",
+        "events",
+        "static_columns",
+        "warnings",
+    }
+    assert payload["events"][0]["name"] == "Ventilation_Mode"
+    assert set(payload["events"][0]["categories"] or []) <= {"PSV", "PCV", "VCV", "none"}
     assert all("values" not in v for v in payload["variables"])
     sex = next(s for s in payload["static_columns"] if s["name"] == "sex")
     assert sex["categories"] is None or all(c in ("M", "F") for c in sex["categories"])
