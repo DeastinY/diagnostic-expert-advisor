@@ -46,7 +46,7 @@ def test_roundtrip_preserves_everything(cohort: Cohort, cohort_dir: Path) -> Non
     ea, eb = cohort.events.collect(), back.events.collect()
     assert eb.schema == EVENT_SCHEMA
     assert ea.sort(KEY).equals(eb.sort(KEY))
-    assert back.get(cohort.encounter_ids[0]).event_variables == ["Ventilation_Mode"]
+    assert back.get(cohort.encounter_ids[0]).event_variables == ["Note", "Ventilation_Mode"]
 
 
 def test_files_are_sorted_for_row_group_pruning(cohort_dir: Path) -> None:

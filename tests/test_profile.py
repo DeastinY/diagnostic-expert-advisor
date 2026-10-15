@@ -51,8 +51,11 @@ def test_prompt_payload_contains_no_patient_level_data(cohort: Cohort) -> None:
         "static_columns",
         "warnings",
     }
-    assert payload["events"][0]["name"] == "Ventilation_Mode"
-    assert set(payload["events"][0]["categories"] or []) <= {"PSV", "PCV", "VCV", "none"}
+    assert {e["name"] for e in payload["events"]} == {"Note", "Ventilation_Mode"}
+    vent = next(e for e in payload["events"] if e["name"] == "Ventilation_Mode")
+    assert set(vent["categories"] or []) <= {"PSV", "PCV", "VCV", "none"}
+    note = next(e for e in payload["events"] if e["name"] == "Note")
+    assert note["categories"] is None  # free text never reaches the advisor
     assert all("values" not in v for v in payload["variables"])
     sex = next(s for s in payload["static_columns"] if s["name"] == "sex")
     assert sex["categories"] is None or all(c in ("M", "F") for c in sex["categories"])
