@@ -30,9 +30,11 @@ def test_builtin_jobs_serial(cohort: Cohort) -> None:
     assert set(BUILTIN_JOBS) == {"encounter_summary", "variable_coverage"}
 
 
-def test_local_backend_matches_serial(cohort: Cohort) -> None:
+@pytest.mark.parametrize("chunk_size", [1, 4])
+def test_local_backend_matches_serial(cohort: Cohort, chunk_size: int) -> None:
     serial = cohort.apply(encounter_summary, SerialBackend()).sort(ENCOUNTER_ID)
-    local = cohort.apply(encounter_summary, LocalBackend(max_workers=2)).sort(ENCOUNTER_ID)
+    backend = LocalBackend(max_workers=2, chunk_size=chunk_size)
+    local = cohort.apply(encounter_summary, backend).sort(ENCOUNTER_ID)
     # means are reduced in a different chunk order per process; allow last-digit noise
     assert_frame_equal(serial, local, check_exact=False, rtol=1e-9)
 
@@ -69,7 +71,7 @@ def test_get_backend() -> None:
     assert isinstance(get_backend("serial"), SerialBackend)
     assert isinstance(get_backend("local", max_workers=1), LocalBackend)
     slurm = get_backend("slurm", folder="x", partition="gpu", account="acc", mem_gb=8)
-    assert isinstance(slurm, SlurmBackend)
+    assert isinstance(slurm, SlurmBackend) and slurm.chunk_size == 200
     assert slurm.params["slurm_partition"] == "gpu" and slurm.params["mem_gb"] == 8
     with pytest.raises(ValueError):
         get_backend("cloud")

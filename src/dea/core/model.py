@@ -519,6 +519,26 @@ class Cohort:
             _full=False,
         )
 
+    def rename_variables(self, mapping: dict[str, str]) -> Cohort:
+        """New cohort with variables renamed (e.g. local codes to canonical names).
+
+        Observations and events are renamed lazily; filters, tags, plots, labels and units in
+        the config follow. Several source names may map to one canonical name. Save the
+        result to persist it.
+        """
+        mapping = {k: v for k, v in mapping.items() if k != v}
+        if not mapping:
+            return self
+        rename = pl.col(VARIABLE).replace(mapping).alias(VARIABLE)
+        return Cohort(
+            self.static,
+            self.dynamic.with_columns(rename),
+            events=self.events.with_columns(rename),
+            config=self.config.renamed(mapping),
+            root=self.root,
+            _full=self._full,
+        )
+
     # ----------------------------------------------------------------- outputs
     def summary(self) -> CohortSummary:
         feats = self.features()
@@ -581,6 +601,45 @@ class Cohort:
                 part = part.join(self.static, on=ENCOUNTER_ID, how="left")
             part.write_parquet(out / f"part-{i:04d}.parquet")
         return out
+
+    def trajectory(
+        self,
+        variable: str,
+        every: str = "1h",
+        by: str | None = None,
+        max_hours: float | None = None,
+        quantiles: tuple[float, float, float] = (0.25, 0.5, 0.75),
+    ) -> pl.DataFrame:
+        """Cohort-level course of one variable: quantiles per grid cell since admission.
+
+        Every encounter contributes one value per cell (its mean in that cell), so frequently
+        sampled encounters do not dominate. Columns: ``[by,] hours, lo, median, hi, n`` where
+        ``n`` is the number of encounters with data in the cell. ``by`` names a static column
+        to split the cohort by.
+        """
+        step = duration_seconds(every)
+        lf = self.dynamic.filter(pl.col(VARIABLE) == variable)
+        if max_hours is not None:
+            lf = lf.filter(pl.col(TIME) <= pl.duration(hours=max_hours))
+        cell = ((pl.col(TIME).dt.total_seconds() // step) * step / 3600.0).alias("hours")
+        keys = [ENCOUNTER_ID, "hours"]
+        per_encounter = lf.with_columns(cell).group_by(keys).agg(pl.col(VALUE).mean())
+        if by:
+            if by not in self.static.columns:
+                raise KeyError(f"unknown static column {by!r}")
+            per_encounter = per_encounter.join(
+                self.static.lazy().select(ENCOUNTER_ID, by), on=ENCOUNTER_ID, how="left"
+            )
+        groups = [by, "hours"] if by else ["hours"]
+        lo, mid, hi = quantiles
+        return collect(
+            per_encounter.group_by(groups).agg(
+                pl.col(VALUE).quantile(lo, interpolation="linear").alias("lo"),
+                pl.col(VALUE).quantile(mid, interpolation="linear").alias("median"),
+                pl.col(VALUE).quantile(hi, interpolation="linear").alias("hi"),
+                pl.col(ENCOUNTER_ID).n_unique().alias("n"),
+            )
+        ).sort(groups)
 
     def to_pandas(self, **kwargs: Any):  # noqa: ANN201 - pandas is optional
         """:meth:`wide` as a pandas DataFrame with a (encounter_id, time) index."""

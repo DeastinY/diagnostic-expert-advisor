@@ -9,7 +9,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from dea.io import detect, import_path, read_table
+from dea.io import delete_cohort, detect, import_path, read_table
 from dea.ui import state
 
 state.sidebar()
@@ -41,6 +41,14 @@ with col_pick:
             ):
                 state.set_cohort(info.path)
                 st.switch_page("pages/overview.py")
+            with c.popover("Delete"):
+                st.caption(f"Remove **{info.name}** and all its files from disk?")
+                if st.button("Delete permanently", key=f"del-{info.path}", type="primary"):
+                    delete_cohort(info.path)
+                    if is_current:
+                        st.session_state.pop("cohort_path", None)
+                    state.invalidate()
+                    st.rerun()
 
 with col_new:
     st.subheader("Add data")

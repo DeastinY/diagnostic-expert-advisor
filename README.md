@@ -50,6 +50,18 @@ dea import /path/to/v1/cohort data/migrated        # the DEA v1 static.csv + <id
 
 ![Encounter view](docs/img/encounter.png)
 
+## What you get in minutes
+
+- **Overview**: stay lengths, variable coverage, tags, and cohort **trajectories** (median and
+  interquartile band of any variable by time since admission, optionally split by outcome,
+  sex or any static column).
+- **Encounters**: searchable list with tags, per-encounter small multiples, string events,
+  and a drag-and-drop explorer.
+- **Profile & advice**: sampling rates, coverage, distributions, red flags, and optional AI
+  recommendations including canonical variable names you can apply with one click.
+- **Compute**: run per-encounter jobs locally or on SLURM, export a modelling frame.
+- **Report**: `dea report data/demo report.html` writes a one-page HTML summary to share.
+
 ## In Python
 
 ```python
@@ -69,6 +81,10 @@ pdf = frame.to_pandas()                                             # or stay in
 
 from dea.compute import LocalBackend
 cohort.apply(my_function, backend=LocalBackend(), name="my_result")  # -> derived/my_result.parquet
+
+cohort.trajectory("MAP", every="4h", by="outcome")        # cohort-level course of a variable
+cohort.export_wide("wide/", every="1h", fill="forward")  # bucket-by-bucket, bounded memory
+cohort.rename_variables({"HF": "heart_rate"}).save()     # harmonize names; config follows
 ```
 
 ## How it fits together
@@ -122,8 +138,10 @@ pytest
 
 ## Status
 
-Alpha. The data model, importers, profiler, compute backends and UI are tested on synthetic
-data; the SLURM backend is implemented but not yet validated on a real cluster.
+Alpha. Tested on synthetic data up to 2,000 encounters / 54 million observations (feature table
+in ~3 s, profile in ~4 s, single-encounter lookup in 20 ms, all under 2.5 GB); storage is
+designed for MIMIC-sized cohorts, see [`docs/architecture.md`](docs/architecture.md). The SLURM
+backend is implemented but not yet validated on a real cluster.
 
 ## License
 

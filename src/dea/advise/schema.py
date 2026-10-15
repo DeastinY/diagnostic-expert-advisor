@@ -31,6 +31,10 @@ Fill = Literal["none", "forward", "interpolate", "zero", "drop"]
 class VariableAdvice(BaseModel):
     variable: str = Field(description="Exact variable name from the profile")
     label: str = Field(description="Short human-readable English label")
+    canonical_name: str = Field(
+        description="Standard machine name for this variable (e.g. 'heart_rate', 'pao2_fio2'); "
+        "empty string if the source name is already a good canonical name"
+    )
     role: Role
     unit_guess: str = Field(description="Likely unit, or empty string if unknown")
     imputation: Fill = Field(description="How to fill gaps after resampling")
@@ -55,6 +59,17 @@ class Recommendation(BaseModel):
     plot_variables: list[str] = Field(description="Up to eight variables worth charting by default")
     storage_notes: list[str]
     warnings: list[str]
+
+    def variable_map(self, known_variables: list[str] | None = None) -> dict[str, str]:
+        """Source name -> canonical name for every variable the advisor wants renamed."""
+        known = set(known_variables) if known_variables is not None else None
+        return {
+            v.variable: v.canonical_name
+            for v in self.variables
+            if v.canonical_name
+            and v.canonical_name != v.variable
+            and (known is None or v.variable in known)
+        }
 
     def to_processing_config(self) -> ProcessingConfig:
         overrides = {}

@@ -31,6 +31,14 @@ dea advise data/my_cohort                  # get a recommendation (JSON)
 dea advise data/my_cohort --apply          # write it into cohort.yaml
 ```
 
+## Canonical names
+
+Each variable also gets a `canonical_name` (for example `heart_rate` for a local `HF` code).
+`dea advise COHORT --apply --rename`, or the checkbox in the UI, renames variables in the data
+and in every config reference (filters, tags, plots, labels); the mapping is recorded under
+`variable_map` in `cohort.yaml`. Cohorts from different hospitals become comparable once they
+share canonical names. `dea rename COHORT OLD=NEW` does the same by hand.
+
 ## How answers are obtained
 
 1. `chat.completions.parse` with the `Recommendation` schema (structured outputs).
