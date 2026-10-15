@@ -116,13 +116,16 @@ def import_mimic(path: Path | str, name: str | None = None) -> tuple[Cohort, Imp
     window = static.lazy().select(ENCOUNTER_ID, "hadm_id", ADMISSION_TIME, "outtime")
     diagnoses = _scan(root, "hosp/diagnoses_icd", required=False)
     if diagnoses is not None:
-        dx = diagnoses.select("hadm_id", "seq_num", "icd_code", "icd_version").join(
+        # ICD-9 codes such as 4019 look numeric to a CSV reader: force text on both sides
+        code = pl.col("icd_code").cast(pl.String()).str.strip_chars()
+        version = pl.col("icd_version").cast(pl.Int64())
+        dx = diagnoses.select("hadm_id", "seq_num", code, version).join(
             window.select(ENCOUNTER_ID, "hadm_id"), on="hadm_id", how="inner"
         )
         titles = _scan(root, "hosp/d_icd_diagnoses", required=False)
         if titles is not None:
             dx = dx.join(
-                titles.select("icd_code", "icd_version", pl.col("long_title").alias("title")),
+                titles.select(code, version, pl.col("long_title").alias("title")),
                 on=["icd_code", "icd_version"],
                 how="left",
             )

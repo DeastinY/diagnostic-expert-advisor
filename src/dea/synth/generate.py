@@ -250,10 +250,14 @@ def default_config(name: str = "synthetic") -> CohortConfig:
 
 
 def _ids(rng: np.random.Generator, n: int) -> list[str]:
-    ids: set[str] = set()
+    # insertion-ordered dict, not a set: set order depends on the process hash seed, which
+    # made the "same" seed produce different cohorts in different runs
+    ids: dict[str, None] = {}
     while len(ids) < n:
-        ids.add(f"ICU-{rng.integers(2019, 2025)}-{rng.integers(10_000, 99_999)}")
-    return sorted(ids, key=lambda _: rng.random())
+        ids[f"ICU-{rng.integers(2019, 2025)}-{rng.integers(10_000, 99_999)}"] = None
+    out = list(ids)
+    rng.shuffle(out)
+    return out
 
 
 def _generate_batch(
