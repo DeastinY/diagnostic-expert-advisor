@@ -163,19 +163,40 @@ def create_app(
     # ---- cohorts
     @app.get("/api/cohorts")
     def cohorts() -> list[dict[str, Any]]:
+        from dea.io import ImportReport
+
         out = []
         for info in list_cohorts(store.data_dir):
-            cfg = store.get(info.path.name).config
+            cohort = store.get(info.path.name)
+            cfg = cohort.config
+            cache = cohort._features_cache()
+            los = None
+            if cache is not None and cache.exists():  # only when already computed: stays cheap
+                hours = pl.scan_parquet(cache).select("los_hours").collect().get_column("los_hours")
+                if hours.len():
+                    hist = (hours / 24).clip(0, 30).hist(bin_count=12, include_breakpoint=False)
+                    los = [int(c) for c in hist.get_column("count")]
+            report = ImportReport.load_dict(info.path) or {}
+            checks = report.get("checks") or []
             out.append(
                 {
                     "name": info.path.name,
                     "title": info.name,
                     "n_encounters": info.n_encounters,
+                    "n_variables": len(cohort.variables),
                     "description": info.description,
                     "parent": cfg.parent,
                     "derived_by": cfg.derived_by,
                     "created_at": cfg.created_at.isoformat(),
                     "source": cfg.source,
+                    "format": report.get("format"),
+                    "site_column": cfg.site_column,
+                    "n_tags": len(cfg.tags),
+                    "n_filters": len(cfg.filters),
+                    "n_warnings": sum(
+                        1 for c in checks if c.get("severity") in ("warning", "error")
+                    ),
+                    "los_hist": los,
                 }
             )
         return out
@@ -400,6 +421,31 @@ def create_app(
                     else charts.category_counts(series, cfg.label(static_column), dark=dark)
                 )
                 out["static"] = chart.to_dict()
+            if where and len(cohort) < len(full):
+                # how the current selection differs from the rest of the cohort
+                from dea.quality.sites import site_bins
+
+                ids = cohort.encounter_ids
+                tagged = full.static.with_columns(
+                    pl.when(pl.col("encounter_id").is_in(ids))
+                    .then(pl.lit("Selection"))
+                    .otherwise(pl.lit("Rest of cohort"))
+                    .alias("_selection")
+                )
+                both = Cohort(
+                    tagged, full.dynamic, events=full.events, config=full.config, root=full.root
+                )
+                top = (
+                    cohort.variable_counts()
+                    .sort("n_observations", descending=True)
+                    .get_column("variable")
+                    .to_list()[:9]
+                )
+                bins = site_bins(both, "_selection", top, sample=150)
+                dist = charts.site_distributions(
+                    bins, cfg.variable_labels, cfg.variable_units, dark=dark, columns=3
+                )
+                out["selection"] = dist.to_dict() if dist is not None else None
             if variable and f"{variable}__mean" in feats.columns:
                 unit = cfg.variable_units.get(variable, "")
                 if by and by in cohort.static.columns:
@@ -589,21 +635,47 @@ def create_app(
         prof = site_profile(cohort, col)
         found = site_checks(cohort, col, prof)
         cfg = cohort.config
-        top = (
+        by_obs = (
             prof.group_by("variable")
             .agg(pl.col("n_obs").sum().alias("n"))
             .sort("n", descending=True)
             .get_column("variable")
-            .to_list()[:12]
+            .to_list()
         )
-        dist = charts.site_distributions(
-            site_bins(cohort, col, top), cfg.variable_labels, cfg.variable_units, dark=dark
+        top = by_obs[:12]
+        # readable with many sites: 8 largest sites in the overlays, 12 in the matrices,
+        # 30 most observed variables in the matrices
+        big_sites = (
+            prof.group_by("site")
+            .agg(pl.col("n_site").first())
+            .sort(["n_site", "site"], descending=[True, False])
+            .get_column("site")
+            .to_list()
         )
+        shown = prof.filter(
+            pl.col("site").is_in(big_sites[:12]) & pl.col("variable").is_in(by_obs[:30])
+        )
+        bins = site_bins(cohort, col, top).filter(pl.col("site").is_in(big_sites[:8]))
+        dist = charts.site_distributions(bins, cfg.variable_labels, cfg.variable_units, dark=dark)
         cov = charts.site_matrix(
-            prof, "coverage", "Share of encounters with data", ".0%", cfg.variable_labels, dark=dark
+            shown,
+            "coverage",
+            "Share of encounters with data",
+            ".0%",
+            cfg.variable_labels,
+            dark=dark,
         )
+        feats = cohort.features()
+        los = None
+        if feats.height and col in feats.columns:
+            feats = feats.filter(pl.col(col).cast(pl.String()).is_in(big_sites[:12]))
+            # point-in-time encounters (outpatient visits) have no stay to compare
+            if feats.height and (feats.get_column("los_hours") > 1).mean() >= 0.5:
+                los = charts.group_boxplot(
+                    feats, "los_hours", col, "Length of stay", "h", dark=dark
+                )
         iv = charts.site_matrix(
-            prof.with_columns((pl.col("interval_s") / 60).alias("interval_min")),
+            shown.with_columns((pl.col("interval_s") / 60).alias("interval_min")),
             "interval_min",
             "Typical sampling interval (min)",
             ".0f",
@@ -614,6 +686,13 @@ def create_app(
         )
         return {
             **out,
+            "shown": {
+                "sites": min(12, len(big_sites)),
+                "of": len(big_sites),
+                "overlay_sites": min(8, len(big_sites)),
+                "variables": min(30, len(by_obs)),
+                "of_variables": len(by_obs),
+            },
             "sizes": _records(
                 static.group_by(col)
                 .agg(pl.len().alias("n"))
@@ -625,6 +704,7 @@ def create_app(
                 "distributions": dist.to_dict() if dist is not None else None,
                 "coverage": cov.to_dict() if cov is not None else None,
                 "sampling": iv.to_dict() if iv is not None else None,
+                "los": los.to_dict() if los is not None else None,
             },
         }
 

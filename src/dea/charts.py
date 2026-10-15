@@ -629,14 +629,14 @@ def site_distributions(
         "site:N",
         title="Site",
         scale=alt.Scale(domain=sites, range=list(t.series)[: len(sites)]),
-        legend=alt.Legend(orient="top", direction="horizontal"),
+        legend=alt.Legend(orient="top", direction="horizontal", columns=4, labelLimit=170),
     )
     base = alt.Chart(df).encode(
         x=alt.X("lo:Q", title=None, axis=alt.Axis(labelFontSize=9, tickCount=4)),
         y=alt.Y("fraction:Q", title=None, axis=None, stack=None),  # overlay, never stack
         color=color,
     )
-    area = base.mark_area(interpolate="step-after", opacity=0.22)
+    area = base.mark_area(interpolate="step-after", opacity=0.22 if len(sites) <= 4 else 0.1)
     line = base.mark_line(interpolate="step-after", strokeWidth=1.6).encode(
         tooltip=[
             alt.Tooltip("panel:N", title="Variable"),
@@ -678,6 +678,7 @@ def site_matrix(
     """Variables × sites heatmap of one column of :func:`dea.quality.site_profile`."""
     t = theme(dark)
     labels = labels or {}
+    profile = profile.filter(pl.col(value).is_not_null())
     if profile.is_empty():
         return None
     order = (
@@ -687,6 +688,7 @@ def site_matrix(
         .get_column(VARIABLE)
         .to_list()
     )
+    n_sites = profile.get_column("site").n_unique()
     df = profile.with_columns(
         pl.col(VARIABLE)
         .replace_strict({v: labels.get(v, v) for v in order}, default=pl.col(VARIABLE))
@@ -696,12 +698,21 @@ def site_matrix(
     if domain and not log:
         scale = alt.Scale(domain=list(domain), range=list(t.sequential))
     base = alt.Chart(df).encode(
-        x=alt.X("site:N", title=None, axis=alt.Axis(labelAngle=0, orient="top")),
+        x=alt.X(
+            "site:N",
+            title=None,
+            axis=alt.Axis(
+                labelAngle=0 if n_sites <= 6 else -35,
+                orient="top",
+                labelLimit=110 if n_sites <= 6 else 150,
+                labelFontSize=10,
+            ),
+        ),
         y=alt.Y(
             "label:N",
             sort=[labels.get(v, v) for v in order],
             title=None,
-            axis=alt.Axis(labelLimit=200, labelOverlap=False),
+            axis=alt.Axis(labelLimit=220, labelOverlap=False, labelFontSize=10),
         ),
     )
     rect = base.mark_rect(stroke=t.surface, strokeWidth=1).encode(
@@ -721,6 +732,8 @@ def site_matrix(
         ),
     )
     chart = alt.layer(rect, text).properties(
-        width=alt.Step(64), height=alt.Step(20), title=alt.Title(title, anchor="start")
+        width=alt.Step(64 if n_sites <= 6 else 46),
+        height=alt.Step(20),
+        title=alt.Title(title, anchor="start"),
     )
     return _apply(chart, t)

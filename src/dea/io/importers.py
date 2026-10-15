@@ -261,7 +261,7 @@ def detect(path: Path | str) -> Detection:
             return Detection(source=p, format="dea")
         if is_mimic_dir(p):
             return Detection(source=p, format="mimic", time_unit="datetime")
-        if any(p.glob("*.ndjson")) and is_fhir_source(p):
+        if (any(p.glob("*.ndjson")) or any(p.glob("*.json"))) and is_fhir_source(p):
             return Detection(source=p, format="fhir", time_unit="datetime")
         has_tree = (p / "static.csv").exists() or any(
             (d / "dynamic.csv").exists() for d in p.iterdir() if d.is_dir()

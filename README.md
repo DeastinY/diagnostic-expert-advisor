@@ -79,6 +79,12 @@ stay window, per-row units (`valueuom`) normalized, ICD-9/ICD-10 diagnoses as `d
 columns. `dea synth out --mimic --n 50` writes synthetic tables in the same layout (including
 MIMIC's °F/°C temperature items and mixed ICD versions) for development without credentials.
 
+## Public data
+
+Tested on DEA's own synthetic cohorts and on the SMART on FHIR sample server data (631 Synthea
+patient bundles, FHIR R4, 30+ organizations). [`docs/datasets.md`](docs/datasets.md) lists the
+open ICU datasets (MIMIC-IV demo, eICU, HiRID, PhysioNet challenges) and how each one feeds in.
+
 ## Checks and harmonization
 
 Every import runs data quality checks before anything is written: mixed units (converted on
