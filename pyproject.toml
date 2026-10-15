@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dea"
+version = "2.0.0a1"
+description = "Diagnostic Expert Advisor: ingest, profile, visualize and analyze clinical time-series cohorts"
+readme = "README.md"
+license = { file = "LICENSE.md" }
+requires-python = ">=3.11"
+authors = [{ name = "Richard Polzin" }]
+keywords = ["clinical", "icu", "time-series", "polars", "streamlit", "cohort"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Healthcare Industry",
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+dependencies = [
+  "numpy>=1.26",
+  "polars>=2.0",
+  "pydantic>=2.6",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+ui = ["streamlit>=1.45", "altair>=5.3"]
+explore = ["pygwalker>=0.4.9", "pandas>=2.0", "pyarrow>=15"]
+ai = ["openai>=1.50"]
+pandas = ["pandas>=2.0", "pyarrow>=15"]
+slurm = ["submitit>=1.5"]
+all = ["dea[ui,explore,ai,pandas,slurm]"]
+dev = ["dea[all]", "pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+dea = "dea.cli:main"
+
+[project.urls]
+Source = "https://github.com/JRC-COMBINE/DEA"
+Issues = "https://github.com/JRC-COMBINE/DEA/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dea"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = ["ignore::DeprecationWarning"]
