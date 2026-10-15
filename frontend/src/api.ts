@@ -72,6 +72,8 @@ export function qs(params: Record<string, string | number | boolean | undefined 
   return s ? `?${s}` : "";
 }
 
+export const isDark = () => typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+
 export const api = {
   cohorts: () => request<CohortInfo[]>("/api/cohorts"),
   cohort: (name: string, where: Where = []) => request<CohortDetail>(`/api/cohorts/${name}${qs({}, where)}`),
@@ -99,9 +101,11 @@ export const api = {
   processing: (name: string, body: Partial<Processing>) =>
     request<Processing>(`/api/cohorts/${name}/processing`, { method: "PUT", body: JSON.stringify(body) }),
   overviewCharts: (name: string, where: Where, params: Record<string, string | undefined>) =>
-    request<Record<string, object>>(`/api/cohorts/${name}/charts/overview${qs(params, where)}`),
+    request<Record<string, object>>(`/api/cohorts/${name}/charts/overview${qs({ ...params, dark: isDark() }, where)}`),
+  profileCharts: (name: string, where: Where) =>
+    request<{ gallery: object | null; observations?: object }>(`/api/cohorts/${name}/charts/profile${qs({ dark: isDark() }, where)}`),
   trajectory: (name: string, where: Where, params: Record<string, string | number | undefined>) =>
-    request<{ spec: object | null; rows: number }>(`/api/cohorts/${name}/charts/trajectory${qs(params, where)}`),
+    request<{ spec: object | null; rows: number }>(`/api/cohorts/${name}/charts/trajectory${qs({ ...params, dark: isDark() }, where)}`),
   encounters: (name: string, where: Where, params: Record<string, string | number | boolean | undefined>) =>
     request<EncounterPage>(`/api/cohorts/${name}/encounters${qs(params, where)}`),
   encounter: (name: string, eid: string) => request<EncounterDetail>(`/api/cohorts/${name}/encounters/${encodeURIComponent(eid)}`),
@@ -109,6 +113,7 @@ export const api = {
     const p = new URLSearchParams();
     variables.forEach((v) => p.append("variables", v));
     if (every) p.set("every", every);
+    if (isDark()) p.set("dark", "true");
     return request<{ spec: object | null }>(`/api/cohorts/${name}/encounters/${encodeURIComponent(eid)}/chart?${p}`);
   },
   profile: (name: string, where: Where) => request<Record<string, any>>(`/api/cohorts/${name}/profile${qs({}, where)}`),  // eslint-disable-line @typescript-eslint/no-explicit-any

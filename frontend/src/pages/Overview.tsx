@@ -50,15 +50,18 @@ export function Overview() {
         {charts.error && <Alert kind="danger">{charts.error}</Alert>}
         <div className="grid c2">
           <Card title="Length of stay">{charts.loading ? <Spinner /> : <VegaChart spec={charts.data?.los} height={220} />}</Card>
-          <Card title="Variable coverage">{charts.loading ? <Spinner /> : <VegaChart spec={charts.data?.coverage} />}</Card>
+          {charts.data?.tags ? <Card title="Tags"><VegaChart spec={charts.data.tags} /></Card> : <Card title="Tags"><p className="muted small">No tags configured yet. Add them in Build cohort or apply the suggestions.</p></Card>}
         </div>
-        {charts.data?.tags && <Card title="Tags"><VegaChart spec={charts.data.tags} /></Card>}
+        <Card title="When is what measured?">
+          <p className="muted small">Share of encounters still in the unit that have data for each variable, per 4-hour window of the first week.</p>
+          {charts.loading ? <Spinner /> : <VegaChart spec={charts.data?.coverage_heatmap} />}
+        </Card>
         <div className="grid c2">
           <Card title="Static column" actions={
             <select value={sc} onChange={(e) => setStaticCol(e.target.value)}>{detail.static_columns.map((c) => <option key={c}>{c}</option>)}</select>}>
             <VegaChart spec={charts.data?.static} height={200} />
           </Card>
-          <Card title="Variable (per-encounter mean)" actions={
+          <Card title="Variable across encounters" actions={
             <div className="row">
               <select value={v} onChange={(e) => setVariable(e.target.value)}>{detail.variables.map((c) => <option key={c} value={c}>{cfg!.variable_labels[c] ?? c}</option>)}</select>
               <select value={by} onChange={(e) => setBy(e.target.value)}><option value="">no split</option>{detail.static_columns.map((c) => <option key={c}>{c}</option>)}</select>

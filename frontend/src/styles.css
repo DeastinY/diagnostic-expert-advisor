@@ -127,3 +127,11 @@ label.field > input, label.field > select { font-size: 13px; }
 details summary { cursor: pointer; color: var(--ink-2); font-weight: 500; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
 .kv dt { color: var(--muted); } .kv dd { margin: 0; }
+
+/* vega tooltips follow the design tokens */
+#vg-tooltip-element { font-family: var(--font) !important; font-size: 12px !important; color: var(--ink) !important;
+  background: var(--surface) !important; border: 1px solid var(--border-strong) !important; border-radius: 8px !important;
+  box-shadow: 0 6px 20px rgba(11,11,11,0.12) !important; padding: 8px 10px !important; }
+#vg-tooltip-element table tr td.key { color: var(--muted) !important; font-weight: 500 !important; padding-right: 10px !important; }
+#vg-tooltip-element table tr td.value { color: var(--ink) !important; font-variant-numeric: tabular-nums; }
+.vega svg { overflow: visible; }

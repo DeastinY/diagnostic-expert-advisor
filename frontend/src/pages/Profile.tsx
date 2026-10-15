@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useCohort } from "../App";
 import { api, fmt, type Recommendation, type Suggestion } from "../api";
 import { Alert, Card, Kpi, Spinner, Tabs, toast, useAsync } from "../components/ui";
+import { VegaChart } from "../components/VegaChart";
 
 const KIND_TITLES: Record<string, string> = {
   harmonize: "Harmonize variable names", static: "Static attributes", drop: "Exclude from processing",
@@ -14,6 +15,7 @@ export function Profile() {
   const prof = useAsync(() => api.profile(name, where), [name, where.join("|")]);
   const sugg = useAsync(() => api.suggestions(name), [name]);
   const ents = useAsync(() => api.entities(name), [name]);
+  const pcharts = useAsync(() => api.profileCharts(name, where), [name, where.join("|")]);
   const [tab, setTab] = useState("Variables");
   const [open, setOpen] = useState<Record<string, boolean>>({ quality: true, processing: true, static: true });
   const [busy, setBusy] = useState(false);
@@ -76,9 +78,14 @@ export function Profile() {
             );
           })}
         </Card>
+        <Card title="Distributions">
+          <p className="muted small">Each variable on its own scale, 1st to 99th percentile, from a sample of encounters.</p>
+          {pcharts.loading ? <Spinner /> : <VegaChart spec={pcharts.data?.gallery} />}
+        </Card>
         <Card>
           <Tabs tabs={["Variables", "Events", "Static", "Processing", "AI advisor", "Entities"]} value={tab} onChange={setTab} />
           {prof.loading && tab !== "Processing" && tab !== "AI advisor" && <Spinner />}
+          {p && tab === "Variables" && pcharts.data?.observations && <div style={{ marginBottom: 12 }}><VegaChart spec={pcharts.data.observations} /></div>}
           {p && tab === "Variables" && (
             <div className="table-wrap"><table className="table">
               <thead><tr><th>Variable</th><th>Coverage</th><th>Observations</th><th>Interval</th><th>Min</th><th>Median</th><th>Max</th><th>Flags</th></tr></thead>

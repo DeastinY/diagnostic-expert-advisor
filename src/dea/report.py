@@ -88,7 +88,9 @@ def render_html(
             add(
                 f"traj_{var}",
                 f"{cfg.label(var)}: cohort trajectory (first week)",
-                charts.trajectory(traj, cfg.label(var), cfg.variable_units.get(var, "")),
+                charts.trajectory(
+                    traj, cfg.label(var), cfg.variable_units.get(var, ""), with_counts=False
+                ),
             )
 
     kpis = [
