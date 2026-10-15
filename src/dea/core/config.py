@@ -60,6 +60,10 @@ class CohortConfig(BaseModel):
     variable_labels: dict[str, str] = Field(default_factory=dict)
     variable_units: dict[str, str] = Field(default_factory=dict)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
+    feature_variables: list[str] | None = Field(
+        default=None,
+        description="Variables aggregated in the feature table; default: the 200 most observed",
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     dea_version: str = "2"
     source: str = ""

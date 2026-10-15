@@ -5,31 +5,42 @@
     <cohort>/
       cohort.yaml                 configuration (filters, tags, plots, processing)
       static.parquet              one row per encounter, keyed by encounter_id
-      dynamic/                    long-format observations, hive-partitioned
-        encounter_id=<id>/*.parquet
-      derived/                    results of Cohort.apply(..., name=...)
-        <name>.parquet
+      dynamic/bucket=NN/*.parquet numeric observations, long format
+      events/bucket=NN/*.parquet  non-numeric observations (strings), long format
+      derived/<name>.parquet      results of Cohort.apply(..., name=...) and caches
 
-Parquet keeps types intact (no index columns creeping into CSVs), compresses well, and
-lets Polars scan only the encounters a query touches.
+Observations are spread over a bounded number of hash buckets (at most 256) rather than
+one directory per encounter, so a MIMIC-sized cohort is a few hundred files instead of
+tens of thousands. Files are sorted by encounter and time, which lets Polars skip whole
+row groups when a single encounter is requested. Everything is written with streaming
+sinks, so writing never requires the data to fit in memory.
 """
 
 from __future__ import annotations
 
+import math
 import shutil
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
 
 from dea.core.config import CohortConfig
-from dea.core.model import ENCOUNTER_ID, LONG_SCHEMA, Cohort
+from dea.core.model import ENCOUNTER_ID, EVENT_SCHEMA, LONG_SCHEMA, TIME, Cohort
 
 COHORT_FILE = "cohort.yaml"
 STATIC_FILE = "static.parquet"
 DYNAMIC_DIR = "dynamic"
+EVENTS_DIR = "events"
 DERIVED_DIR = "derived"
-_BATCH = 64
+BUCKET = "bucket"
+ENCOUNTERS_PER_BUCKET = 500
+MAX_BUCKETS = 256
+
+
+def n_buckets(n_encounters: int) -> int:
+    return max(1, min(MAX_BUCKETS, math.ceil(n_encounters / ENCOUNTERS_PER_BUCKET)))
 
 
 def is_cohort_dir(path: Path | str) -> bool:
@@ -37,42 +48,96 @@ def is_cohort_dir(path: Path | str) -> bool:
     return (p / COHORT_FILE).is_file() and (p / STATIC_FILE).is_file()
 
 
-def _scan_dynamic(dyn_dir: Path) -> pl.LazyFrame:
-    if not dyn_dir.exists() or not any(dyn_dir.rglob("*.parquet")):
-        return pl.LazyFrame(schema=LONG_SCHEMA)
-    return pl.scan_parquet(
-        dyn_dir / "**" / "*.parquet",
-        hive_partitioning=True,
-        hive_schema={ENCOUNTER_ID: pl.String()},
-    ).select(list(LONG_SCHEMA))
+def sink_long(
+    frame: pl.LazyFrame | pl.DataFrame, directory: Path, buckets: int, tag: str = "data"
+) -> None:
+    """Stream a long frame into ``directory/bucket=NN/<tag>-<i>.parquet``, sorted per file.
+
+    Several calls with different ``tag`` values can add to the same directory, which is how
+    large cohorts are written in batches.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+
+    def file_name(args) -> str:  # noqa: ANN001 - polars' FileProviderArgs is unstable
+        bucket = args.partition_keys.get_column(BUCKET)[0]
+        return f"{BUCKET}={bucket}/{tag}-{args.index_in_partition:04d}.parquet"
+
+    (
+        frame.lazy()
+        .with_columns((pl.col(ENCOUNTER_ID).hash() % buckets).alias(BUCKET))
+        .sort(BUCKET, ENCOUNTER_ID, TIME)
+        .sink_parquet(
+            pl.PartitionBy(
+                str(directory), key=BUCKET, include_key=False, file_path_provider=file_name
+            ),
+            maintain_order=True,
+        )
+    )
+
+
+def scan_long(directory: Path, schema: dict[str, pl.DataType]) -> pl.LazyFrame:
+    if not directory.exists() or not any(directory.rglob("*.parquet")):
+        return pl.LazyFrame(schema=schema)
+    return pl.scan_parquet(directory / "**" / "*.parquet").select(list(schema))
+
+
+def _replace_dir(final: Path, tmp: Path) -> None:
+    if final.exists():
+        shutil.rmtree(final)
+    tmp.rename(final)
 
 
 def save_cohort(cohort: Cohort, path: Path | str) -> Path:
     """Write a cohort to ``path``; safe to call on the directory it was loaded from."""
     root = Path(path)
     root.mkdir(parents=True, exist_ok=True)
-    cohort.config.save(root / COHORT_FILE)
+    buckets = n_buckets(len(cohort))
 
-    # Dynamic data first, into a temporary directory, so that saving in place never reads
-    # from files that are being replaced.
-    tmp = root / f"{DYNAMIC_DIR}.tmp"
-    if tmp.exists():
-        shutil.rmtree(tmp)
-    tmp.mkdir()
-    ids = cohort.encounter_ids
-    for start in range(0, len(ids), _BATCH):
-        batch = ids[start : start + _BATCH]
-        frame = cohort.dynamic.filter(pl.col(ENCOUNTER_ID).is_in(batch)).collect()
-        if frame.is_empty():
-            continue
-        frame.write_parquet(tmp, partition_by=ENCOUNTER_ID)
-    final = root / DYNAMIC_DIR
-    if final.exists():
-        shutil.rmtree(final)
-    tmp.rename(final)
+    # Observations go to temporary directories first, so that saving in place never
+    # reads from files that are being replaced.
+    for name, frame in (
+        (DYNAMIC_DIR, cohort.dynamic),
+        (EVENTS_DIR, cohort.events),
+    ):
+        tmp = root / f"{name}.tmp"
+        if tmp.exists():
+            shutil.rmtree(tmp)
+        sink_long(frame, tmp, buckets)
+        _replace_dir(root / name, tmp)
 
     cohort.static.write_parquet(root / STATIC_FILE)
-    cohort.dynamic = _scan_dynamic(final)
+    cohort.config.save(root / COHORT_FILE)
+    cache = root / DERIVED_DIR / Cohort.FEATURES_CACHE
+    cache.unlink(missing_ok=True)
+    cohort.dynamic = scan_long(root / DYNAMIC_DIR, LONG_SCHEMA)
+    cohort.events = scan_long(root / EVENTS_DIR, EVENT_SCHEMA)
+    return root
+
+
+def write_cohort_batches(
+    path: Path | str,
+    config: CohortConfig,
+    batches: Iterable[tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame | None]],
+    n_encounters: int,
+) -> Path:
+    """Write a cohort from an iterator of ``(static, dynamic, events)`` batches.
+
+    Used for sources too large to hold in memory (synthetic generation, chunked imports).
+    """
+    root = Path(path)
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True)
+    buckets = n_buckets(n_encounters)
+    statics = []
+    for i, (static, dynamic, events) in enumerate(batches):
+        statics.append(static)
+        sink_long(dynamic, root / DYNAMIC_DIR, buckets, tag=f"b{i:05d}")
+        if events is not None and events.height:
+            sink_long(events, root / EVENTS_DIR, buckets, tag=f"b{i:05d}")
+    static = pl.concat(statics, how="diagonal_relaxed").sort(ENCOUNTER_ID)
+    static.write_parquet(root / STATIC_FILE)
+    config.save(root / COHORT_FILE)
     return root
 
 
@@ -82,8 +147,17 @@ def load_cohort(path: Path | str) -> Cohort:
         raise FileNotFoundError(f"{root} is not a DEA cohort (missing {COHORT_FILE}/{STATIC_FILE})")
     config = CohortConfig.load(root / COHORT_FILE)
     static = pl.read_parquet(root / STATIC_FILE)
-    dynamic = _scan_dynamic(root / DYNAMIC_DIR)
-    return Cohort(static, dynamic, config=config, root=root)
+    dynamic = scan_long(root / DYNAMIC_DIR, LONG_SCHEMA)
+    events = scan_long(root / EVENTS_DIR, EVENT_SCHEMA)
+    return Cohort(static, dynamic, events=events, config=config, root=root)
+
+
+def delete_cohort(path: Path | str) -> None:
+    """Remove a cohort directory. Refuses anything that is not a DEA cohort."""
+    root = Path(path)
+    if not is_cohort_dir(root):
+        raise FileNotFoundError(f"{root} is not a DEA cohort")
+    shutil.rmtree(root)
 
 
 @dataclass(frozen=True)
