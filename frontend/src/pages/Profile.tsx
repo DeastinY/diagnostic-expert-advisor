@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import { useCohort } from "../App";
 import { api, fmt, type Recommendation, type Suggestion } from "../api";
-import { Alert, Card, Kpi, Spinner, Tabs, toast, useAsync } from "../components/ui";
+import { Alert, Card, ChecksList, Kpi, SeverityChip, Spinner, Tabs, toast, useAsync } from "../components/ui";
 import { VegaChart } from "../components/VegaChart";
 
 const KIND_TITLES: Record<string, string> = {
   harmonize: "Harmonize variable names", static: "Static attributes", drop: "Exclude from processing",
-  processing: "Processing defaults", tag: "Clinical tags", filter: "Filters from static data", plot: "Default charts", quality: "Data quality",
+  processing: "Processing defaults", tag: "Clinical tags", filter: "Filters from static data", plot: "Default charts", quality: "Data quality checks",
 };
 const KIND_ORDER = ["quality", "processing", "static", "drop", "harmonize", "tag", "filter", "plot"];
 
@@ -68,7 +68,7 @@ export function Profile() {
                   <div key={s.id} className="sugg">
                     <span className="muted">·</span>
                     <div>
-                      <div><b>{s.title}</b>{s.confidence < 1 && <span className="muted small"> · {Math.round(s.confidence * 100)}%</span>}</div>
+                      <div>{s.severity ? <><SeverityChip severity={s.severity} /> </> : null}<b>{s.title}</b>{!s.severity && s.confidence < 1 && <span className="muted small"> · {Math.round(s.confidence * 100)}%</span>}</div>
                       <div className="small muted">{s.detail}</div>
                     </div>
                     {s.applicable ? <button className="sm" disabled={busy} onClick={() => apply([s.id])}>Apply</button> : <span className="chip">info</span>}
@@ -78,6 +78,7 @@ export function Profile() {
             );
           })}
         </Card>
+        <ImportCard name={name} />
         <Card title="Distributions">
           <p className="muted small">Each variable on its own scale, 1st to 99th percentile, from a sample of encounters.</p>
           {pcharts.loading ? <Spinner /> : <VegaChart spec={pcharts.data?.gallery} />}
@@ -194,5 +195,39 @@ function AdvisorPanel() {
         </div>
       )}
     </div>
+  );
+}
+
+
+function ImportCard({ name }: { name: string }) {
+  const rep = useAsync(() => api.importReport(name), [name]);
+  const r = rep.data && "format" in rep.data ? rep.data : null;
+  if (!r) return null;
+  const units = r.unit_reports ?? [];
+  return (
+    <Card title="At import">
+      <div className="row" style={{ marginBottom: 8 }}>
+        <span className="chip on">{r.format}</span>
+        <span className="chip">{r.n_encounters} encounters</span>
+        <span className="chip">{r.n_observations.toLocaleString()} observations</span>
+        {Object.entries(r.mapping ?? {}).filter(([, v]) => v).map(([k, v]) => <span key={k} className="chip"><span className="k">{k}</span> {v}</span>)}
+      </div>
+      {r.warnings?.map((w) => <Alert key={w}>{w}</Alert>)}
+      {units.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <b className="small">Units harmonized</b>
+          <ul className="small muted" style={{ margin: "4px 0 0 16px" }}>
+            {units.map((u) => (
+              <li key={u.variable}><b>{u.variable}</b> → {u.label || u.canonical}
+                {Object.entries(u.converted).map(([k, n]) => ` · ${n.toLocaleString()} rows from ${k}`)}
+                {Object.entries(u.unconvertible).map(([k, n]) => ` · ${n.toLocaleString()} rows in ${k} not convertible`)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <b className="small">Checks at import</b>
+      <ChecksList checks={r.checks ?? []} empty="No findings at import." />
+    </Card>
   );
 }

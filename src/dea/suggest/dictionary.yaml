@@ -1,171 +1,484 @@
 # Clinical variable dictionary used for offline harmonization, unit checks and tag suggestions.
-# Each entry: canonical name, label, unit, plausible range, role, default fill, synonyms.
-# Synonyms are matched case-insensitively after normalizing spaces, underscores and punctuation.
+# Each entry: canonical name, label, display unit, LOINC code (empty when none applies), UCUM unit
+# code, plausible range in the canonical unit, role, default fill, synonyms (English, German,
+# MIMIC item ids). Synonyms are matched case-insensitively after normalizing punctuation.
 - name: heart_rate
   label: Heart rate
-  unit: 1/min
-  range: [20, 250]
+  unit: bpm
+  range:
+  - 20
+  - 250
   role: vital_sign
   fill: interpolate
-  synonyms: [hr, heart rate, herzfrequenz, hf, pulse, 220045]
+  synonyms:
+  - hr
+  - heart rate
+  - herzfrequenz
+  - hf
+  - pulse
+  - 220045
+  loinc: 8867-4
+  ucum: /min
 - name: map
   label: Mean arterial pressure
   unit: mmHg
-  range: [20, 200]
+  range:
+  - 20
+  - 200
   role: vital_sign
   fill: interpolate
-  synonyms: [map, mean arterial pressure, arterial blood pressure mean, mittlerer arterieller druck, nibp mean, 220052, 220181]
+  synonyms:
+  - map
+  - mean arterial pressure
+  - arterial blood pressure mean
+  - mittlerer arterieller druck
+  - nibp mean
+  - 220052
+  - 220181
+  loinc: 8478-0
+  ucum: mm[Hg]
 - name: sbp
   label: Systolic blood pressure
   unit: mmHg
-  range: [40, 300]
+  range:
+  - 40
+  - 300
   role: vital_sign
   fill: interpolate
-  synonyms: [sbp, sap, systolic, arterial blood pressure systolic, systolischer druck, 220050, 220179]
+  synonyms:
+  - sbp
+  - sap
+  - systolic
+  - arterial blood pressure systolic
+  - systolischer druck
+  - 220050
+  - 220179
+  loinc: 8480-6
+  ucum: mm[Hg]
 - name: spo2
   label: Peripheral oxygen saturation
-  unit: "%"
-  range: [40, 100]
+  unit: '%'
+  range:
+  - 40
+  - 100
   role: vital_sign
   fill: interpolate
-  synonyms: [spo2, o2 saturation pulseoxymetry, sauerstoffsaettigung, sao2 pulse, 220277]
+  synonyms:
+  - spo2
+  - o2 saturation pulseoxymetry
+  - sauerstoffsaettigung
+  - sao2 pulse
+  - 220277
+  loinc: 59408-5
+  ucum: '%'
 - name: respiratory_rate
   label: Respiratory rate
   unit: 1/min
-  range: [0, 70]
+  range:
+  - 0
+  - 70
   role: vital_sign
   fill: interpolate
-  synonyms: [rr, af, respiratory rate, atemfrequenz, resp rate, 220210, af spontan]
+  synonyms:
+  - rr
+  - af
+  - respiratory rate
+  - atemfrequenz
+  - resp rate
+  - 220210
+  - af spontan
+  loinc: 9279-1
+  ucum: /min
 - name: temperature
   label: Body temperature
-  unit: "°C"
-  range: [30, 43]
+  unit: °C
+  range:
+  - 30
+  - 43
   role: vital_sign
   fill: forward
-  synonyms: [temp, temperature, temperature celsius, koerpertemperatur, koerperkerntemperatur, 223762]
+  synonyms:
+  - temp
+  - temperature
+  - temperature celsius
+  - koerpertemperatur
+  - koerperkerntemperatur
+  - 223762
+  - temperature fahrenheit
+  - temp f
+  - temp c
+  - '223761'
+  - '223762'
+  - '676'
+  - '678'
+  loinc: 8310-5
+  ucum: Cel
 - name: fio2
   label: Inspired oxygen fraction
-  unit: ""
-  range: [0.21, 1.0]
+  unit: ''
+  range:
+  - 0.21
+  - 1.0
   role: ventilation
   fill: forward
-  synonyms: [fio2, inspired o2 fraction, 223835]
+  synonyms:
+  - fio2
+  - inspired o2 fraction
+  - 223835
+  loinc: 3150-0
+  ucum: '1'
 - name: peep
   label: PEEP
   unit: cmH2O
-  range: [0, 30]
+  range:
+  - 0
+  - 30
   role: ventilation
   fill: forward
-  synonyms: [peep, peep set, 220339]
+  synonyms:
+  - peep
+  - peep set
+  - 220339
+  loinc: 76248-8
+  ucum: cm[H2O]
 - name: tidal_volume
   label: Tidal volume
   unit: mL
-  range: [50, 1500]
+  range:
+  - 50
+  - 1500
   role: ventilation
   fill: forward
-  synonyms: [tidal volume, tidal volume observed, tidalvolumen, vt, 224685]
+  synonyms:
+  - tidal volume
+  - tidal volume observed
+  - tidalvolumen
+  - vt
+  - 224685
+  loinc: 76222-3
+  ucum: mL
 - name: tidal_volume_per_kg
   label: Tidal volume per kg IBW
   unit: mL/kg
-  range: [1, 20]
+  range:
+  - 1
+  - 20
   role: ventilation
   fill: forward
-  synonyms: [tidalvolume per kg, individuelles tidalvolumen pro kg idealem koerpergewicht, vt per kg]
+  synonyms:
+  - tidalvolume per kg
+  - individuelles tidalvolumen pro kg idealem koerpergewicht
+  - vt per kg
+  loinc: ''
+  ucum: mL/kg
 - name: compliance
   label: Respiratory system compliance
   unit: mL/cmH2O
-  range: [5, 200]
+  range:
+  - 5
+  - 200
   role: ventilation
   fill: forward
-  synonyms: [compliance, 229661]
+  synonyms:
+  - compliance
+  - 229661
+  loinc: ''
+  ucum: mL/cm[H2O]
 - name: pao2
   label: Arterial oxygen partial pressure
   unit: mmHg
-  range: [20, 600]
+  range:
+  - 20
+  - 600
   role: blood_gas
   fill: forward
-  synonyms: [pao2, arterial o2 pressure, pao2 ohne temp korrektur, 220224]
+  synonyms:
+  - pao2
+  - arterial o2 pressure
+  - pao2 ohne temp korrektur
+  - 220224
+  loinc: 2703-7
+  ucum: mm[Hg]
 - name: paco2
   label: Arterial CO2 partial pressure
   unit: mmHg
-  range: [10, 150]
+  range:
+  - 10
+  - 150
   role: blood_gas
   fill: forward
-  synonyms: [paco2, arterial co2 pressure, paco2 ohne temp korrektur, 220235]
+  synonyms:
+  - paco2
+  - arterial co2 pressure
+  - paco2 ohne temp korrektur
+  - 220235
+  loinc: 2019-8
+  ucum: mm[Hg]
 - name: ph
   label: Arterial pH
-  unit: ""
-  range: [6.6, 7.9]
+  unit: ''
+  range:
+  - 6.6
+  - 7.9
   role: blood_gas
   fill: forward
-  synonyms: [ph, ph arterial, 223830, 50820]
+  synonyms:
+  - ph
+  - ph arterial
+  - 223830
+  - 50820
+  loinc: 2744-1
+  ucum: '[pH]'
 - name: pao2_fio2
   label: Horowitz index (paO2/FiO2)
   unit: mmHg
-  range: [20, 700]
+  range:
+  - 20
+  - 700
   role: blood_gas
   fill: forward
-  synonyms: [horowitz, horowitz quotient, horowitz quotient ohne temp korrektur, pf ratio, p/f ratio, pao2/fio2, oxygenierungsindex]
+  synonyms:
+  - horowitz
+  - horowitz quotient
+  - horowitz quotient ohne temp korrektur
+  - pf ratio
+  - p/f ratio
+  - pao2/fio2
+  - oxygenierungsindex
+  loinc: 50984-4
+  ucum: mm[Hg]
 - name: lactate
   label: Lactate
   unit: mmol/L
-  range: [0.1, 30]
+  range:
+  - 0.1
+  - 30
   role: laboratory
   fill: forward
-  synonyms: [lactate, laktat, laktat arteriell, 50813, 225668]
+  synonyms:
+  - lactate
+  - laktat
+  - laktat arteriell
+  - 50813
+  - 225668
+  loinc: 2524-7
+  ucum: mmol/L
 - name: wbc
   label: White blood cell count
   unit: G/L
-  range: [0.1, 100]
+  range:
+  - 0.1
+  - 100
   role: laboratory
   fill: forward
-  synonyms: [wbc, white blood cells, leukocytes, leukozyten, 51301]
+  synonyms:
+  - wbc
+  - white blood cells
+  - leukocytes
+  - leukozyten
+  - 51301
+  loinc: 6690-2
+  ucum: 10*9/L
 - name: crp
   label: C-reactive protein
   unit: mg/L
-  range: [0, 600]
+  range:
+  - 0
+  - 600
   role: laboratory
   fill: forward
-  synonyms: [crp, c reactive protein, c-reactive protein, 50889]
+  synonyms:
+  - crp
+  - c reactive protein
+  - c-reactive protein
+  - 50889
+  loinc: 1988-5
+  ucum: mg/L
 - name: procalcitonin
   label: Procalcitonin
   unit: ng/mL
-  range: [0, 200]
+  range:
+  - 0
+  - 200
   role: laboratory
   fill: forward
-  synonyms: [pct, procalcitonin, 51652]
+  synonyms:
+  - pct
+  - procalcitonin
+  - 51652
+  loinc: 33959-8
+  ucum: ug/L
 - name: creatinine
   label: Serum creatinine
   unit: mg/dL
-  range: [0.1, 25]
+  range:
+  - 0.1
+  - 25
   role: laboratory
   fill: forward
-  synonyms: [creatinine, kreatinin, 50912]
+  synonyms:
+  - creatinine
+  - kreatinin
+  - 50912
+  loinc: 2160-0
+  ucum: mg/dL
 - name: bilirubin
   label: Total bilirubin
   unit: mg/dL
-  range: [0, 60]
+  range:
+  - 0
+  - 60
   role: laboratory
   fill: forward
-  synonyms: [bilirubin, bilirubin total, bilirubin ges, 50885]
+  synonyms:
+  - bilirubin
+  - bilirubin total
+  - bilirubin ges
+  - 50885
+  loinc: 1975-2
+  ucum: mg/dL
 - name: norepinephrine
   label: Norepinephrine rate
-  unit: "µg/kg/min"
-  range: [0, 5]
+  unit: µg/kg/min
+  range:
+  - 0
+  - 5
   role: medication
   fill: zero
-  synonyms: [norepinephrine, noradrenalin, norepinephrin intravenoes kontinuierlich, 221906]
+  synonyms:
+  - norepinephrine
+  - noradrenalin
+  - norepinephrin intravenoes kontinuierlich
+  - 221906
+  loinc: ''
+  ucum: ug/kg/min
+  rxnorm: '7512'
+  atc: C01CA03
 - name: sofa
   label: SOFA score
   unit: points
-  range: [0, 24]
+  range:
+  - 0
+  - 24
   role: score
   fill: forward
-  synonyms: [sofa, sofa score, organversagen sofa score]
+  synonyms:
+  - sofa
+  - sofa score
+  - organversagen sofa score
+  loinc: ''
+  ucum: '{score}'
 - name: weight
   label: Body weight
   unit: kg
-  range: [20, 400]
+  range:
+  - 20
+  - 400
   role: demographic
   fill: forward
-  synonyms: [weight, admission weight, admission weight kg, gewicht, 226512]
+  synonyms:
+  - weight
+  - admission weight
+  - admission weight kg
+  - gewicht
+  - 226512
+  loinc: 29463-7
+  ucum: kg
+- name: glucose
+  label: Blood glucose
+  unit: mg/dL
+  loinc: 2345-7
+  ucum: mg/dL
+  range:
+  - 20
+  - 800
+  role: laboratory
+  fill: forward
+  synonyms:
+  - glucose
+  - glukose
+  - blutzucker
+  - '50931'
+  - '220621'
+  - '225664'
+- name: hemoglobin
+  label: Hemoglobin
+  unit: g/dL
+  loinc: 718-7
+  ucum: g/dL
+  range:
+  - 2
+  - 25
+  role: laboratory
+  fill: forward
+  synonyms:
+  - hemoglobin
+  - haemoglobin
+  - hb
+  - hgb
+  - haemoglobin
+  - '51222'
+  - '220228'
+- name: potassium
+  label: Potassium
+  unit: mmol/L
+  loinc: 2823-3
+  ucum: mmol/L
+  range:
+  - 1.5
+  - 9
+  role: laboratory
+  fill: forward
+  synonyms:
+  - potassium
+  - kalium
+  - k+
+  - '50971'
+  - '227442'
+- name: sodium
+  label: Sodium
+  unit: mmol/L
+  loinc: 2951-2
+  ucum: mmol/L
+  range:
+  - 100
+  - 180
+  role: laboratory
+  fill: forward
+  synonyms:
+  - sodium
+  - natrium
+  - na+
+  - '50983'
+  - '220645'
+- name: height
+  label: Body height
+  unit: cm
+  loinc: 8302-2
+  ucum: cm
+  range:
+  - 40
+  - 250
+  role: demographic
+  fill: forward
+  synonyms:
+  - height
+  - groesse
+  - koerpergroesse
+  - '226730'
+- name: urine_output
+  label: Urine output
+  unit: mL
+  loinc: 9187-6
+  ucum: mL
+  range:
+  - 0
+  - 5000
+  role: fluid_balance
+  fill: zero
+  synonyms:
+  - urine output
+  - urin
+  - foley
+  - '226559'
+  - '226560'

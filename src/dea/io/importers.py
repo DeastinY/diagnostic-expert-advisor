@@ -5,6 +5,8 @@ Three input shapes are understood:
 * **table (long)** - one row per observation: encounter, time, variable, value.
 * **table (wide)** - one row per encounter and time, one column per variable.
 * **csv tree** - the DEA v1 layout: ``static.csv`` plus ``<id>/dynamic.csv`` per encounter.
+* **MIMIC-IV** and **FHIR R4** layouts are handled by :mod:`dea.io.mimic` and
+  :mod:`dea.standards.fhir`; :func:`detect` recognizes them.
 
 :func:`detect` guesses the shape and the key columns; :func:`import_path` applies the guess
 (or your overrides) and returns the cohort together with an :class:`ImportReport`.
@@ -17,6 +19,7 @@ observations, string columns become events, and absolute timestamps are kept as 
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +41,8 @@ from dea.core.model import (
 
 TimeUnit = Literal["auto", "datetime", "s", "ms", "m", "h", "d"]
 ADMISSION_TIME = "admission_time"
+UNIT = "unit"
+IMPORT_REPORT_FILE = "import.json"
 _UNIT_SECONDS = {"s": 1.0, "ms": 0.001, "m": 60.0, "h": 3600.0, "d": 86400.0}
 _SAMPLE_ROWS = 50_000
 
@@ -50,7 +55,8 @@ _TIME_HINT = re.compile(
 _VARIABLE_HINT = re.compile(
     r"(variable|item|label|parameter|feature|concept|measurement|signal|^name$)", re.I
 )
-_VALUE_HINT = re.compile(r"(^value|valuenum|result|measurement_value|^val$)", re.I)
+_VALUE_HINT = re.compile(r"(^value$|valuenum|result|measurement_value|^val$)", re.I)
+_UNIT_HINT = re.compile(r"(^unit|valueuom|^uom$|units?$|unit_source_value)", re.I)
 _UNIT_BY_NAME = (
     (re.compile(r"(min|minute)", re.I), "m"),
     (re.compile(r"(hour|hrs|^h$)", re.I), "h"),
@@ -72,6 +78,28 @@ class ImportReport:
     event_columns: list[str] = field(default_factory=list)
     dropped_columns: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    unit_reports: list[Any] = field(default_factory=list)  # dea.suggest.units.UnitReport
+    checks: list[Any] = field(default_factory=list)  # dea.quality.Check
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **{k: v for k, v in self.__dict__.items() if k not in ("unit_reports", "checks")},
+            "unit_reports": [r.to_dict() for r in self.unit_reports],
+            "checks": [c.to_dict() for c in self.checks],
+        }
+
+    def save(self, cohort_dir: Path | str) -> Path:
+        """Keep the report next to the cohort (``import.json``) so the UI can show it later."""
+        out = Path(cohort_dir) / IMPORT_REPORT_FILE
+        out.write_text(json.dumps(self.to_dict(), indent=2, default=str), encoding="utf-8")
+        return out
+
+    @staticmethod
+    def load_dict(cohort_dir: Path | str) -> dict[str, Any] | None:
+        file = Path(cohort_dir) / IMPORT_REPORT_FILE
+        if not file.exists():
+            return None
+        return json.loads(file.read_text(encoding="utf-8"))
 
     def summary_lines(self) -> list[str]:
         lines = [
@@ -90,6 +118,8 @@ class ImportReport:
         if self.dropped_columns:
             lines.append("dropped columns: " + ", ".join(self.dropped_columns))
         lines.extend(f"warning: {w}" for w in self.warnings)
+        lines.extend(f"units: {m}" for r in self.unit_reports if (m := r.message()))
+        lines.extend(f"check [{c.severity}]: {c.title}" for c in self.checks)
         return lines
 
 
@@ -98,12 +128,13 @@ class Detection:
     """Best guess at how a source is laid out. Every field can be overridden on import."""
 
     source: Path
-    format: Literal["dea", "csv_tree", "mimic", "table", "unknown"]
+    format: Literal["dea", "csv_tree", "mimic", "fhir", "table", "unknown"]
     table_kind: Literal["long", "wide"] | None = None
     encounter_col: str | None = None
     time_col: str | None = None
     variable_col: str | None = None
     value_col: str | None = None
+    unit_col: str | None = None
     time_unit: TimeUnit = "auto"
     columns: list[str] = field(default_factory=list)
     dtypes: dict[str, str] = field(default_factory=dict)
@@ -196,6 +227,9 @@ def detect_table(df: pl.DataFrame, source: Path | str = "<frame>") -> Detection:
     if det.time_col is None:
         det.notes.append("no time column found")
     keys = (det.encounter_col, det.time_col)
+    unit_hint = [c for c in cols if _UNIT_HINT.search(c) and c not in keys]
+    det.unit_col = unit_hint[0] if unit_hint else None
+    keys = (*keys, det.unit_col)
     var_hint = [c for c in cols if _VARIABLE_HINT.search(c) and c not in keys]
     val_hint = [c for c in cols if _VALUE_HINT.search(c) and c not in keys]
     rest = [c for c in cols if c not in keys]
@@ -208,6 +242,7 @@ def detect_table(df: pl.DataFrame, source: Path | str = "<frame>") -> Detection:
         det.table_kind, det.variable_col, det.value_col = "long", rest[1], rest[0]
     else:
         det.table_kind = "wide"
+        det.unit_col = None
     if det.time_col:
         det.time_unit = _guess_time_unit(df, det.time_col, det.encounter_col)
     return det
@@ -220,11 +255,14 @@ def detect(path: Path | str) -> Detection:
 
     if p.is_dir():
         from dea.io.mimic import is_mimic_dir
+        from dea.standards.fhir import is_fhir_source
 
         if is_cohort_dir(p):
             return Detection(source=p, format="dea")
         if is_mimic_dir(p):
             return Detection(source=p, format="mimic", time_unit="datetime")
+        if any(p.glob("*.ndjson")) and is_fhir_source(p):
+            return Detection(source=p, format="fhir", time_unit="datetime")
         has_tree = (p / "static.csv").exists() or any(
             (d / "dynamic.csv").exists() for d in p.iterdir() if d.is_dir()
         )
@@ -238,6 +276,11 @@ def detect(path: Path | str) -> Detection:
         )
     if not p.exists():
         raise FileNotFoundError(p)
+    if p.suffix.lower() in (".json", ".ndjson"):
+        from dea.standards.fhir import is_fhir_source
+
+        if is_fhir_source(p):
+            return Detection(source=p, format="fhir", time_unit="datetime")
     try:
         sample = read_table(p, n_rows=_SAMPLE_ROWS)
     except Exception as exc:
@@ -447,8 +490,14 @@ def import_long(
     static: pl.DataFrame | None = None,
     name: str = "cohort",
     source: str = "<frame>",
+    unit_col: str | None = None,
 ) -> tuple[Cohort, ImportReport]:
-    """Import a long table (one row per observation). Non-numeric values become events."""
+    """Import a long table (one row per observation). Non-numeric values become events.
+
+    With ``unit_col`` every row's unit is read and variables the dictionary recognizes are
+    converted to their canonical unit (°F to °C, percent to fraction, ...); the report lists
+    what changed.
+    """
     report = ImportReport(
         source=str(source),
         format="table/long",
@@ -457,16 +506,19 @@ def import_long(
             "time": time_col,
             "variable": variable_col,
             "value": value_col,
+            "unit": unit_col,
             "time_unit": time_unit,
         },
     )
     lf = df.lazy().filter(pl.col(encounter_col).is_not_null() & pl.col(variable_col).is_not_null())
     lf, admission = _to_duration(lf, time_col, encounter_col, time_unit, report)
+    extra = [pl.col(unit_col).cast(pl.String()).alias(UNIT)] if unit_col else []
     base = lf.select(
         pl.col(encounter_col).cast(pl.String()).alias(ENCOUNTER_ID),
         TIME,
         pl.col(variable_col).cast(pl.String()).alias(VARIABLE),
         pl.col(value_col).alias(VALUE),
+        *extra,
     ).filter(pl.col(TIME).is_not_null() & pl.col(VALUE).is_not_null())
     if lf.collect_schema()[value_col].is_numeric():
         dynamic = base.with_columns(pl.col(VALUE).cast(pl.Float64()))
@@ -477,7 +529,11 @@ def import_long(
         dynamic = text.filter(numeric.is_not_null()).with_columns(numeric)
         events = text.filter(numeric.is_null())
         report.event_columns = [f"{value_col} (non-numeric rows)"]
-    return _finish(
+    units: dict[str, str] = {}
+    codes: dict[str, str] = {}
+    if unit_col:
+        dynamic, units, codes = harmonize_units(dynamic, UNIT, report)
+    cohort = _finish(
         dynamic.select(list(LONG_SCHEMA)),
         events.select(list(EVENT_SCHEMA)),
         static,
@@ -485,7 +541,48 @@ def import_long(
         name,
         report,
         str(source),
-    ), report
+    )
+    cohort.config.variable_units.update(units)
+    cohort.config.variable_codes.update(codes)
+    return cohort, report
+
+
+def harmonize_units(
+    dynamic: pl.LazyFrame, unit_col: str, report: ImportReport, value_col: str = VALUE
+) -> tuple[pl.LazyFrame, dict[str, str], dict[str, str]]:
+    """Normalize per-row units of dictionary-known variables; returns frame, units, LOINC codes.
+
+    The returned ``units`` map every variable to its display unit (the concept's unit when it
+    was harmonized, otherwise the most frequent unit string in the data).
+    """
+    from dea.suggest.units import normalize_units
+    from dea.suggest.vocab import load_dictionary
+
+    d = load_dictionary()
+    names = collect(dynamic.select(VARIABLE).unique()).get_column(VARIABLE).to_list()
+    targets, codes = {}, {}
+    for v in names:
+        m = d.match(v)
+        if m and m[0].ucum:
+            targets[v] = (m[0].ucum, m[0].name)
+            if m[0].loinc:
+                codes[v] = m[0].loinc
+    dynamic, report.unit_reports = normalize_units(dynamic, unit_col, targets, value_col=value_col)
+    for rep in report.unit_reports:
+        rep.label = d.by_name[targets[rep.variable][1]].unit
+    majority = (
+        collect(
+            dynamic.filter(pl.col(unit_col).is_not_null() & (pl.col(unit_col) != ""))
+            .group_by(VARIABLE, unit_col)
+            .agg(pl.len().alias("n"))
+        )
+        .sort("n", descending=True)
+        .unique(subset=[VARIABLE], keep="first")
+    )
+    units = {v: u for v, u in majority.select(VARIABLE, unit_col).iter_rows()}
+    for v, (_, concept) in targets.items():
+        units[v] = d.by_name[concept].unit
+    return dynamic, units, codes
 
 
 def _read_legacy_static(path: Path, report: ImportReport) -> pl.DataFrame | None:
@@ -552,9 +649,29 @@ def import_path(
     name: str | None = None,
     detection: Detection | None = None,
     static_path: Path | str | None = None,
+    checks: bool = True,
     **overrides: Any,
 ) -> tuple[Cohort, ImportReport]:
-    """Detect and import ``path``. Keyword overrides replace fields of the detection."""
+    """Detect and import ``path``. Keyword overrides replace fields of the detection.
+
+    With ``checks`` (the default) the data quality checks run on the imported cohort and
+    land in ``report.checks`` before anything is written.
+    """
+    cohort, report = _import_path(path, name, detection, static_path, **overrides)
+    if checks and report.format != "dea":
+        from dea.quality import run_checks
+
+        report.checks = run_checks(cohort, unit_reports=report.unit_reports)
+    return cohort, report
+
+
+def _import_path(
+    path: Path | str,
+    name: str | None,
+    detection: Detection | None,
+    static_path: Path | str | None,
+    **overrides: Any,
+) -> tuple[Cohort, ImportReport]:
     from dea.io.storage import load_cohort
 
     p = Path(path)
@@ -576,6 +693,10 @@ def import_path(
         from dea.io.mimic import import_mimic
 
         return import_mimic(p, name=cohort_name)
+    if det.format == "fhir":
+        from dea.standards.fhir import import_fhir
+
+        return import_fhir(p, name=cohort_name)
     if det.format != "table":
         raise ValueError(f"cannot import {p}: {'; '.join(det.notes) or 'unknown layout'}")
     lf = scan_table(p)
@@ -600,6 +721,7 @@ def import_path(
             static,
             cohort_name,
             str(p),
+            unit_col=det.unit_col or None,
         )
     return import_wide(
         lf, det.encounter_col, det.time_col, det.time_unit, static, static_cols, cohort_name, str(p)

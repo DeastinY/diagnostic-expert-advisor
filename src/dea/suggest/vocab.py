@@ -1,4 +1,4 @@
-"""A small clinical dictionary and fuzzy matching of variable names against it."""
+"""A small clinical dictionary (with LOINC and UCUM codes) and fuzzy matching against it."""
 
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ class Concept:
     role: str
     fill: str
     synonyms: tuple[str, ...] = field(default_factory=tuple)
+    loinc: str = ""
+    ucum: str = ""
 
 
 def normalize(text: str) -> str:
@@ -35,10 +37,12 @@ class Dictionary:
     def __init__(self, concepts: list[Concept]) -> None:
         self.concepts = concepts
         self.by_name = {c.name: c for c in concepts}
+        self.by_loinc = {c.loinc: c for c in concepts if c.loinc}
         self._index: dict[str, Concept] = {}
         for c in concepts:
-            for s in (c.name, c.label, *c.synonyms):
-                self._index.setdefault(normalize(s), c)
+            for s in (c.name, c.label, c.loinc, *c.synonyms):
+                if s:
+                    self._index.setdefault(normalize(s), c)
 
     def match(self, variable: str, threshold: float = 0.86) -> tuple[Concept, float] | None:
         """Best concept for a source variable name, with a similarity score in [0, 1]."""
@@ -68,6 +72,8 @@ def load_dictionary(path: Path | None = None) -> Dictionary:
             role=e.get("role", "other"),
             fill=e.get("fill", "forward"),
             synonyms=tuple(str(s) for s in e.get("synonyms", [])),
+            loinc=str(e.get("loinc", "") or ""),
+            ucum=str(e.get("ucum", "") or ""),
         )
         for e in raw
     ]

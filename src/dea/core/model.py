@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from dea.core.config import CohortConfig, ProcessingConfig
+from dea.core.config import CohortConfig, ProcessingConfig, ValueFix
 from dea.core.time import duration_seconds
 
 if TYPE_CHECKING:
@@ -535,6 +535,51 @@ class Cohort:
             self.dynamic.with_columns(rename),
             events=self.events.with_columns(rename),
             config=self.config.renamed(mapping),
+            root=self.root,
+            _full=self._full,
+        )
+
+    def fix_values(
+        self, variable: str, where: str, expr: str | None = None, description: str = ""
+    ) -> Cohort:
+        """Rewrite (or drop) the observations of ``variable`` selected by ``where``.
+
+        ``where`` and ``expr`` are SQL over the ``value`` column, e.g.
+        ``fix_values("Temperature", "value > 50", "(value - 32) / 1.8")`` repairs Fahrenheit
+        rows; ``expr=None`` drops the selected rows. The fix is recorded in the config so the
+        provenance of stored values stays visible. Save the result to persist it.
+        """
+        hit = (pl.col(VARIABLE) == variable) & pl.sql_expr(where)
+        if expr is None:
+            dynamic = self.dynamic.filter(~hit)
+        else:
+            dynamic = self.dynamic.with_columns(
+                pl.when(hit).then(pl.sql_expr(expr)).otherwise(pl.col(VALUE)).alias(VALUE)
+            )
+        config = self.config.model_copy(deep=True)
+        config.value_fixes.append(
+            ValueFix(variable=variable, where=where, expr=expr, description=description)
+        )
+        return Cohort(
+            self.static,
+            dynamic,
+            events=self.events,
+            config=config,
+            root=self.root,
+            _full=self._full,
+        )
+
+    def dedupe(self) -> Cohort:
+        """Drop repeated (encounter, time, variable) observations, keeping the first."""
+        config = self.config.model_copy(deep=True)
+        config.value_fixes.append(
+            ValueFix(variable="*", where="duplicate", description="duplicate rows removed")
+        )
+        return Cohort(
+            self.static,
+            self.dynamic.unique(subset=[ENCOUNTER_ID, TIME, VARIABLE], keep="first"),
+            events=self.events,
+            config=config,
             root=self.root,
             _full=self._full,
         )

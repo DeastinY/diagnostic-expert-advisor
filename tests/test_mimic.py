@@ -24,11 +24,13 @@ def test_layout_matches_mimic(mimic_root: Path) -> None:
         "hosp/admissions",
         "hosp/labevents",
         "hosp/d_labitems",
+        "hosp/diagnoses_icd",
+        "hosp/d_icd_diagnoses",
     ):
         assert (mimic_root / f"{rel}.csv.gz").exists(), rel
     chart = pl.read_csv(mimic_root / "icu/chartevents.csv.gz")
     assert chart.columns[:5] == ["subject_id", "hadm_id", "stay_id", "caregiver_id", "charttime"]
-    assert {220045, 223849, 226512} <= set(chart["itemid"].unique())
+    assert {220045, 223849, 226512, 223761} <= set(chart["itemid"].unique())
     assert is_mimic_dir(mimic_root) and detect(mimic_root).format == "mimic"
 
 
