@@ -71,3 +71,23 @@ def test_cli_import_and_detect(cohort_dir: Path, tmp_path: Path, capsys) -> None
 def test_cli_advise_show_payload(cohort_dir: Path, capsys) -> None:
     assert main(["advise", str(cohort_dir), "--show-payload"]) == 0
     assert '"sampling"' in capsys.readouterr().out
+
+
+def test_cli_rename(tmp_path: Path, capsys) -> None:
+    out = tmp_path / "r"
+    assert main(["synth", str(out), "--n", "3"]) == 0
+    assert main(["rename", str(out), "HR=heart_rate", "MAP=map"]) == 0
+    c = load_cohort(out)
+    assert "heart_rate" in c.variables and "HR" not in c.variables
+    assert c.config.variable_map == {"HR": "heart_rate", "MAP": "map"}
+    assert c.config.plots[0] == "heart_rate"
+
+
+def test_report(cohort_dir: Path, tmp_path: Path) -> None:
+    pytest.importorskip("altair")
+    out = tmp_path / "report.html"
+    assert main(["report", str(cohort_dir), str(out)]) == 0
+    text = out.read_text()
+    assert "<title>unit · DEA report</title>" in text
+    assert "vegaEmbed('#los'" in text and "Heart rate" in text and "Ventilation_Mode" in text
+    assert "ICU-" not in text  # no encounter ids in a shareable report

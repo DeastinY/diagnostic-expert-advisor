@@ -60,6 +60,9 @@ class CohortConfig(BaseModel):
     variable_labels: dict[str, str] = Field(default_factory=dict)
     variable_units: dict[str, str] = Field(default_factory=dict)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
+    variable_map: dict[str, str] = Field(
+        default_factory=dict, description="Source variable name -> canonical name, as applied"
+    )
     feature_variables: list[str] | None = Field(
         default=None,
         description="Variables aggregated in the feature table; default: the 200 most observed",
@@ -67,6 +70,32 @@ class CohortConfig(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     dea_version: str = "2"
     source: str = ""
+
+    def renamed(self, mapping: dict[str, str]) -> CohortConfig:
+        """Copy of the config with variables renamed everywhere they are referenced."""
+        new = self.model_copy(deep=True)
+
+        def ren(name: str) -> str:
+            return mapping.get(name, name)
+
+        def ren_text(text: str) -> str:
+            for old, new_name in mapping.items():
+                text = text.replace(f"{old}__", f"{new_name}__")
+            return text
+
+        new.plots = [ren(v) for v in self.plots]
+        new.variable_labels = {ren(k): v for k, v in self.variable_labels.items()}
+        new.variable_units = {ren(k): v for k, v in self.variable_units.items()}
+        new.processing.drop_variables = [ren(v) for v in self.processing.drop_variables]
+        new.processing.fill_overrides = {
+            ren(k): v for k, v in self.processing.fill_overrides.items()
+        }
+        if self.feature_variables:
+            new.feature_variables = [ren(v) for v in self.feature_variables]
+        for rule in new.filters + new.tags:
+            rule.where = ren_text(rule.where)
+        new.variable_map = {**self.variable_map, **mapping}
+        return new
 
     def label(self, variable: str) -> str:
         return self.variable_labels.get(variable, variable)

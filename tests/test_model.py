@@ -190,3 +190,34 @@ def test_config_yaml_roundtrip(tmp_path) -> None:
     assert back.processing.resample_every == "5m"
     with pytest.raises(ValueError):
         Rule(label="empty", where="  ")
+
+
+def test_trajectory(tiny: Cohort) -> None:
+    traj = tiny.trajectory("HR", every="1h")
+    assert traj.columns == ["hours", "lo", "median", "hi", "n"]
+    # hour 0: a contributes mean(80, 82, 84) = 82, b contributes 100 -> linear quantiles
+    first = traj.row(0, named=True)
+    assert first["hours"] == 0.0 and first["n"] == 2 and first["median"] == 91.0
+    assert first["lo"] == 86.5 and first["hi"] == 95.5
+    split = tiny.trajectory("HR", every="1h", by="sex")
+    assert split.columns == ["sex", "hours", "lo", "median", "hi", "n"]
+    assert split.filter(pl.col("sex") == "F")["median"].to_list() == [100.0, 110.0]
+    assert tiny.trajectory("HR", every="1h", max_hours=0.5).height == 1
+    with pytest.raises(KeyError):
+        tiny.trajectory("HR", by="nope")
+
+
+def test_rename_variables(tiny: Cohort, tmp_path) -> None:
+    renamed = tiny.rename_variables({"HR": "heart_rate", "Lactate": "Lactate"})
+    assert renamed.variables == ["Lactate", "heart_rate"]
+    assert renamed.config.filters[0].where == '"heart_rate__max" > 90'
+    assert renamed.config.variable_map == {"HR": "heart_rate"}
+    assert renamed.filter_by_labels(["Tachy"]).encounter_ids == ["b"]
+    assert tiny.variables == ["HR", "Lactate"]  # original untouched
+    assert tiny.rename_variables({"HR": "HR"}) is tiny
+    path = renamed.save(tmp_path / "renamed")
+    from dea.io import load_cohort
+
+    back = load_cohort(path)
+    assert back.variables == ["Lactate", "heart_rate"]
+    assert back.config.variable_map == {"HR": "heart_rate"}

@@ -125,6 +125,50 @@ with e2:
                 width="stretch",
             )
 
+st.subheader("Trajectories")
+st.caption("Median and interquartile band across encounters, by time since admission.")
+if variables:
+    t1, t2, t3, t4 = st.columns([2, 1, 1, 1])
+    tvar = t1.selectbox(
+        "Variable",
+        variables,
+        key="traj_var",
+        format_func=cfg.label,
+        index=variables.index(cfg.plots[0]) if cfg.plots and cfg.plots[0] in variables else 0,
+    )
+    tgrid = t2.selectbox("Grid", ["1h", "4h", "12h", "1d"], key="traj_grid")
+    tmax = t3.number_input("Max hours", min_value=6, max_value=24 * 60, value=24 * 7, step=24)
+    tby = t4.selectbox("Split by", by_options, key="traj_by")
+    traj = cohort.trajectory(
+        tvar, every=tgrid, by=None if tby == "(none)" else tby, max_hours=float(tmax)
+    )
+    if traj.height:
+        st.altair_chart(
+            charts.trajectory(
+                traj,
+                cfg.label(tvar),
+                cfg.variable_units.get(tvar, ""),
+                by=None if tby == "(none)" else tby,
+            ),
+            width="stretch",
+        )
+    else:
+        st.caption("No observations of this variable in the selected window.")
+
+st.subheader("Share")
+if st.button("Build one-page HTML report"):
+    from dea.report import render_html
+
+    with st.spinner("Rendering report…"):
+        st.session_state["report_html"] = render_html(cohort)
+if st.session_state.get("report_html"):
+    st.download_button(
+        "Download report",
+        st.session_state["report_html"].encode(),
+        file_name=f"{cfg.name}_report.html",
+        mime="text/html",
+    )
+
 with st.expander("Static table"):
     st.dataframe(cohort.static.to_pandas(), width="stretch", hide_index=True)
     st.download_button(
