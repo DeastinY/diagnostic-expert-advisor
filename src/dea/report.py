@@ -1,7 +1,8 @@
 """One-page HTML report of a cohort: summary, charts and profile tables.
 
-Produces a single self-contained file (charts render through vega-embed from a CDN) that a
-clinician can open or forward without running anything. Requires ``dea[ui]`` for Altair.
+Produces a single file a clinician can open or forward without running anything. With
+``dea[report]`` (vl-convert) charts are embedded as static SVG and the file works offline and
+prints; without it, charts load vega-embed from a CDN. Requires ``dea[ui]`` for Altair.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ margin:0;padding:32px;max-width:1100px}h1{margin:0 0 4px}h2{margin:32px 0 8px;fo
 table{border-collapse:collapse;font-size:.85rem;width:100%}th,td{text-align:left;padding:4px 8px;
 border-bottom:1px solid #e1e0d9}th{color:#52514e;font-weight:normal}
 .warn{background:#fff8e1;border-left:3px solid #eda100;padding:8px 12px;margin:6px 0}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}.chart{width:100%}
+.chart{width:100%}.chart svg{max-width:100%;height:auto}
 """
 
 _VEGA = (
@@ -60,10 +61,16 @@ def render_html(
     feats = cohort.features()
     summary = cohort.summary()
     specs: list[tuple[str, str, str]] = []  # (element id, heading, vega-lite json)
+    try:
+        import vl_convert as vlc
+    except ImportError:  # pragma: no cover - depends on optional extra
+        vlc = None
 
     def add(name: str, heading: str, chart) -> None:  # noqa: ANN001
-        if chart is not None:
-            specs.append((name, heading, chart.properties(width="container").to_json()))
+        if chart is None:
+            return
+        width = 1000 if vlc else "container"
+        specs.append((name, heading, chart.properties(width=width).to_json()))
 
     add(
         "los", "Length of stay", charts.histogram(feats["los_hours"] / 24, "Length of stay", "days")
@@ -101,11 +108,19 @@ def render_html(
         for k, v in kpis
     )
     warn_html = "".join(f'<div class="warn">{html.escape(w)}</div>' for w in profile.warnings)
-    chart_html = "".join(
-        f'<section><h2>{html.escape(h)}</h2><div id="{i}" class="chart"></div></section>'
-        for i, h, _ in specs
-    )
-    embed = "".join(f"vegaEmbed('#{i}', {spec}, {{actions:false}});" for i, _, spec in specs)
+    if vlc:
+        chart_html = "".join(
+            f'<section><h2>{html.escape(h)}</h2><div id="{i}" class="chart">'
+            f"{vlc.vegalite_to_svg(spec)}</div></section>"
+            for i, h, spec in specs
+        )
+        embed = ""
+    else:
+        chart_html = "".join(
+            f'<section><h2>{html.escape(h)}</h2><div id="{i}" class="chart"></div></section>'
+            for i, h, _ in specs
+        )
+        embed = "".join(f"vegaEmbed('#{i}', {spec}, {{actions:false}});" for i, _, spec in specs)
     tags_html = ""
     if cfg.tags:
         tags = cohort.tag_matrix()
@@ -153,7 +168,7 @@ def render_html(
     head = (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"<title>{title} · DEA report</title><style>{_CSS}</style>{_VEGA}</head>"
+        f"<title>{title} · DEA report</title><style>{_CSS}</style>{'' if vlc else _VEGA}</head>"
     )
     intro = (
         f'<h1>{title}</h1><p class="muted">{html.escape(cfg.description)}<br>'
