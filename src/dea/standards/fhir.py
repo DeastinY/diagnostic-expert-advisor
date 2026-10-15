@@ -13,6 +13,7 @@ the dictionary provides them, which is what most interoperability tooling expect
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -52,7 +53,9 @@ RESOURCES = ("Patient", "Encounter", "Observation", "Condition")
 
 
 def _iter_resources(path: Path) -> Iterator[dict[str, Any]]:
-    files = sorted(path.glob("*.ndjson")) + sorted(path.glob("*.json")) if path.is_dir() else [path]
+    files = (
+        sorted(path.rglob("*.ndjson")) + sorted(path.rglob("*.json")) if path.is_dir() else [path]
+    )
     for file in files:
         with file.open(encoding="utf-8") as fh:
             if file.suffix == ".ndjson":
@@ -64,7 +67,9 @@ def _iter_resources(path: Path) -> Iterator[dict[str, Any]]:
         if data.get("resourceType") == "Bundle":
             for entry in data.get("entry", []):
                 if "resource" in entry:
-                    yield entry["resource"]
+                    res = entry["resource"]
+                    res.setdefault("id", _res_id(res, entry.get("fullUrl")))
+                    yield res
         elif "resourceType" in data:
             yield data
 
@@ -78,10 +83,44 @@ def is_fhir_source(path: Path | str) -> bool:
     return bool(first) and first.get("resourceType") in RESOURCES + ("Bundle",)
 
 
+SNOMED = "http://snomed.info/sct"
+_ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\ufeff]")
+
+
 def _ref_id(ref: dict[str, Any] | None) -> str | None:
+    """``Patient/123``, ``urn:uuid:…`` and absolute URLs all reduce to the bare id."""
     if not ref or "reference" not in ref:
         return None
-    return str(ref["reference"]).split("/")[-1]
+    text = str(ref["reference"])
+    if text.startswith("urn:uuid:"):
+        return text[9:]
+    return text.split("/")[-1]
+
+
+def _res_id(resource: dict[str, Any], full_url: str | None) -> str:
+    """A resource's id, falling back to the bundle entry's fullUrl (transaction bundles)."""
+    rid = resource.get("id")
+    if rid:
+        return str(rid)
+    if full_url and full_url.startswith("urn:uuid:"):
+        return full_url[9:]
+    return str(full_url or "").split("/")[-1]
+
+
+def _dt(col: str) -> pl.Expr:
+    return (
+        pl.col(col).str.to_datetime(strict=False, time_zone="UTC").dt.replace_time_zone(None)
+    ).alias(col)
+
+
+def _text(concept: dict[str, Any]) -> str | None:
+    """Display text of a CodeableConcept."""
+    if concept.get("text"):
+        return str(concept["text"])
+    for c in concept.get("coding") or []:
+        if c.get("display"):
+            return str(c["display"])
+    return None
 
 
 def _when(obs: dict[str, Any]) -> str | None:
@@ -107,6 +146,7 @@ def _variable_name(code: dict[str, Any] | None, resource: dict[str, Any]) -> tup
     if loinc and loinc in d.by_loinc:
         return d.by_loinc[loinc].name, loinc
     text = (resource.get("code") or {}).get("text") or (code or {}).get("display")
+    text = _ZERO_WIDTH.sub("", text).strip() if text else text
     return text or loinc or "unknown", loinc
 
 
@@ -142,9 +182,11 @@ def import_fhir(path: Path | str, name: str | None = None) -> tuple[Cohort, Impo
     root = Path(path)
     report = ImportReport(source=str(root), format="fhir")
     patients: dict[str, dict[str, Any]] = {}
+    organizations: dict[str, str] = {}
     encounters: list[dict[str, Any]] = []
     observations: list[dict[str, Any]] = []
     conditions: list[dict[str, Any]] = []
+    other_conditions: list[dict[str, Any]] = []
     skipped: dict[str, int] = {}
     for res in _iter_resources(root):
         kind = res.get("resourceType")
@@ -153,8 +195,12 @@ def import_fhir(path: Path | str, name: str | None = None) -> tuple[Cohort, Impo
                 "sex": res.get("gender"),
                 "birth_date": res.get("birthDate"),
             }
+        elif kind == "Organization":
+            organizations[str(res.get("id"))] = res.get("name") or str(res.get("id"))
         elif kind == "Encounter":
             period = res.get("period") or {}
+            types = res.get("type") or []
+            reasons = res.get("reasonCode") or []
             encounters.append(
                 {
                     ENCOUNTER_ID: str(res.get("id")),
@@ -162,25 +208,39 @@ def import_fhir(path: Path | str, name: str | None = None) -> tuple[Cohort, Impo
                     "start": period.get("start"),
                     "end": period.get("end"),
                     "encounter_class": (res.get("class") or {}).get("code"),
+                    "encounter_type": _text(types[0]) if types else None,
+                    "reason": _text(reasons[0]) if reasons else None,
+                    "provider": _ref_id(res.get("serviceProvider")),
                     "status": res.get("status"),
                 }
             )
         elif kind == "Observation":
             observations.extend(_observation_rows(res))
         elif kind == "Condition":
-            for c in (res.get("code") or {}).get("coding") or []:
-                if c.get("system") in ICD_SYSTEMS:
-                    conditions.append(
-                        {
-                            "encounter": _ref_id(res.get("encounter") or res.get("context")),
-                            "patient": _ref_id(res.get("subject")),
-                            "icd_code": c.get("code"),
-                            "icd_version": ICD_SYSTEMS[c["system"]],
-                            "title": c.get("display"),
-                            "when": res.get("recordedDate") or res.get("onsetDateTime"),
-                        }
-                    )
-                    break
+            codings = (res.get("code") or {}).get("coding") or []
+            when = res.get("recordedDate") or res.get("onsetDateTime")
+            icd = next((c for c in codings if c.get("system") in ICD_SYSTEMS), None)
+            if icd is not None:
+                conditions.append(
+                    {
+                        "encounter": _ref_id(res.get("encounter") or res.get("context")),
+                        "patient": _ref_id(res.get("subject")),
+                        "icd_code": icd.get("code"),
+                        "icd_version": ICD_SYSTEMS[icd["system"]],
+                        "title": icd.get("display"),
+                        "when": when,
+                    }
+                )
+            elif codings or (res.get("code") or {}).get("text"):
+                # SNOMED or local codes: kept as a 'Condition' event with the display text
+                other_conditions.append(
+                    {
+                        "encounter": _ref_id(res.get("encounter") or res.get("context")),
+                        "patient": _ref_id(res.get("subject")),
+                        "when": when,
+                        "text": _text(res.get("code") or {}),
+                    }
+                )
         elif kind:
             skipped[kind] = skipped.get(kind, 0) + 1
     if not encounters:
@@ -188,7 +248,23 @@ def import_fhir(path: Path | str, name: str | None = None) -> tuple[Cohort, Impo
     for kind, n in sorted(skipped.items()):
         report.warnings.append(f"{n} {kind} resource(s) ignored")
 
-    enc = pl.DataFrame(encounters).with_columns(
+    enc = pl.DataFrame(
+        encounters,
+        schema={
+            ENCOUNTER_ID: pl.String(),
+            "patient": pl.String(),
+            "start": pl.String(),
+            "end": pl.String(),
+            "encounter_class": pl.String(),
+            "encounter_type": pl.String(),
+            "reason": pl.String(),
+            "provider": pl.String(),
+            "status": pl.String(),
+        },
+    ).with_columns(
+        pl.col("provider").replace(organizations) if organizations else pl.col("provider"),
+    )
+    enc = enc.with_columns(
         pl.col("start").str.to_datetime(strict=False, time_zone="UTC").dt.replace_time_zone(None),
         pl.col("end").str.to_datetime(strict=False, time_zone="UTC").dt.replace_time_zone(None),
     )
@@ -264,6 +340,39 @@ def import_fhir(path: Path | str, name: str | None = None) -> tuple[Cohort, Impo
         .select(ENCOUNTER_ID, TIME, VARIABLE, pl.col("text").alias(VALUE))
         .select(list(EVENT_SCHEMA))
     )
+    if other_conditions:
+        cond_ev = _attach(
+            pl.DataFrame(
+                other_conditions,
+                schema={
+                    "encounter": pl.String(),
+                    "patient": pl.String(),
+                    "when": pl.String(),
+                    "text": pl.String(),
+                },
+            ).with_columns(_dt("when")),
+            windows,
+            report,
+            quiet=True,
+        )
+        cond_ev = cond_ev.with_columns(
+            pl.coalesce(pl.col("when"), pl.col(ADMISSION_TIME)).alias("when")
+        ).with_columns(
+            (pl.col("when") - pl.col(ADMISSION_TIME)).cast(LONG_SCHEMA[TIME]).alias(TIME)
+        )
+        events = pl.concat(
+            [
+                events,
+                cond_ev.lazy()
+                .select(
+                    ENCOUNTER_ID,
+                    TIME,
+                    pl.lit("Condition").alias(VARIABLE),
+                    pl.col("text").alias(VALUE),
+                )
+                .select(list(EVENT_SCHEMA)),
+            ]
+        )
     units = (
         collect(numeric.drop_nulls("unit").group_by(VARIABLE, "unit").agg(pl.len().alias("n")))
         .sort("n", descending=True)
@@ -284,6 +393,8 @@ def import_fhir(path: Path | str, name: str | None = None) -> tuple[Cohort, Impo
         codes.setdefault(v, d.by_name[concept].loinc)
 
     static = enc.drop("end")
+    if static.get_column("provider").null_count() == static.height:
+        static = static.drop("provider")
     if conditions:
         cond = _attach(
             pl.DataFrame(
@@ -307,12 +418,15 @@ def import_fhir(path: Path | str, name: str | None = None) -> tuple[Cohort, Impo
         )
         dx = diagnosis_table(cond, seq_col=None, title_col="title")
         static = static.join(dx, on=ENCOUNTER_ID, how="left")
+    from dea.quality.sites import detect_site_column
+
     config = CohortConfig(
         name=name or root.stem,
         description="Imported from FHIR R4 resources; one encounter per Encounter resource.",
         source=str(root),
         variable_units=variable_units,
         variable_codes={k: v for k, v in codes.items() if v},
+        site_column=detect_site_column(static),
     )
     cohort = Cohort(static.sort(ENCOUNTER_ID), dynamic, events=events, config=config)
     report.n_encounters = len(cohort)

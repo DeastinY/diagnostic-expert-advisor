@@ -53,6 +53,12 @@ export function Overview() {
           <Card title="Length of stay">{charts.loading ? <Spinner /> : <VegaChart spec={charts.data?.los} height={220} />}</Card>
           {charts.data?.tags ? <Card title="Tags"><VegaChart spec={charts.data.tags} /></Card> : <Card title="Tags"><p className="muted small">No tags configured yet. Add them in Build cohort or apply the suggestions.</p></Card>}
         </div>
+        {filtered && (
+          <Card title="Selection versus the rest of the cohort">
+            <p className="muted small">Share of observations per bin for the selected encounters and for everyone else, on shared bins. Nine most observed variables.</p>
+            {charts.loading ? <Spinner /> : <VegaChart spec={charts.data?.selection} />}
+          </Card>
+        )}
         <Card title="When is what measured?">
           <p className="muted small">Share of encounters still in the unit that have data for each variable, per 4-hour window of the first week.</p>
           {charts.loading ? <Spinner /> : <VegaChart spec={charts.data?.coverage_heatmap} />}
@@ -110,15 +116,17 @@ function SitesCard({ name, where, configured, onChange }: { name: string; where:
   return (
     <Card title={`Across sites · ${d.column}`} actions={pick}>
       <div className="row" style={{ marginBottom: 8 }}>
-        {(d.sizes ?? []).map((r) => <span key={String(r[d.column!])} className="chip">{String(r[d.column!])} <span className="k">{r.n}</span></span>)}
+        {(d.sizes ?? []).slice(0, 12).map((r) => <span key={String(r[d.column!])} className="chip">{String(r[d.column!])} <span className="k">{r.n}</span></span>)}
+        {(d.sizes?.length ?? 0) > 12 && <span className="chip">+{d.sizes!.length - 12} more</span>}
         {warn > 0 && <span className="chip warn">{warn} finding(s)</span>}
       </div>
-      <p className="muted small">Each curve is the share of that site's observations per bin, so sites of different size compare directly. Twelve most observed variables, from a sample of encounters per site.</p>
+      <p className="muted small">Each curve is the share of that site's observations per bin, so sites of different size compare directly. Twelve most observed variables, from a sample of encounters per site{d.shown && d.shown.overlay_sites < d.shown.of ? `, ${d.shown.overlay_sites} largest sites` : ""}.</p>
       {cmp.loading ? <Spinner /> : <VegaChart spec={d.charts.distributions} />}
       <div className="grid c2" style={{ marginTop: 12 }}>
         <div><VegaChart spec={d.charts.coverage} /></div>
-        <div><VegaChart spec={d.charts.sampling} /></div>
+        <div>{d.charts.sampling ? <VegaChart spec={d.charts.sampling} /> : <p className="muted small" style={{ marginTop: 28 }}>No repeated measurements within encounters, so there is no sampling interval to compare.</p>}</div>
       </div>
+      {d.charts.los && <div style={{ marginTop: 12 }}><VegaChart spec={d.charts.los} height={200} /></div>}
       <div style={{ marginTop: 12 }}>
         <b className="small">Findings</b>
         <ChecksList checks={d.checks} empty="No systematic differences between sites." />

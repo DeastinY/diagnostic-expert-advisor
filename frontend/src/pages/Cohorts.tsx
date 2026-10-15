@@ -1,40 +1,63 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type Detection, type ImportReport } from "../api";
+import { api, type CohortInfo, type Detection, type ImportReport } from "../api";
 import { Alert, Card, ChecksList, Spinner, Tabs, toast, useAsync } from "../components/ui";
+
+const STEPS = [
+  ["Throw data in", "CSV, Parquet, a MIMIC-IV directory or FHIR bundles. DEA detects the layout, the time unit and the units of every variable."],
+  ["Check and harmonize", "Mixed units, implausible values, duplicates and site differences are caught before anything is written. LOINC, UCUM and ICD codes come for free."],
+  ["Look, build, export", "Profiles, trajectories and per-site views out of the box. Build sub-cohorts with a click, then take a Polars or pandas frame to your models, or FHIR to your colleagues."],
+];
 
 export function Cohorts() {
   const nav = useNavigate();
   const { data, error, loading, reload } = useAsync(() => api.cohorts(), []);
   const [tab, setTab] = useState("Import");
+  const [query, setQuery] = useState("");
+  const tree = useMemo(() => buildTree(data ?? [], query), [data, query]);
+  const totals = useMemo(() => ({
+    cohorts: data?.length ?? 0,
+    encounters: (data ?? []).reduce((a, c) => a + c.n_encounters, 0),
+    warnings: (data ?? []).reduce((a, c) => a + c.n_warnings, 0),
+  }), [data]);
   return (
     <>
-      <div className="topbar">
-        <div><h1>Diagnostic Expert Advisor</h1><p className="muted">Bring your cohort. Get structure, profiles and views in minutes.</p></div>
-      </div>
-      <div className="grid" style={{ gridTemplateColumns: "3fr 2fr" }}>
+      <section className="hero">
+        <div>
+          <div className="eyebrow">Diagnostic Expert Advisor</div>
+          <h1 className="hero-title">Bring your cohort. Get structure, checks and views in minutes.</h1>
+          <p className="muted hero-sub">A workbench for clinical time series: import anything, harmonize it to standards, see every patient and every site, and hand clean frames to your models. Everything runs locally; the AI advisor only ever sees aggregate statistics.</p>
+        </div>
+        <div className="hero-stats">
+          <div><b>{totals.cohorts}</b><span>cohorts</span></div>
+          <div><b>{totals.encounters.toLocaleString()}</b><span>encounters</span></div>
+          <div><b>{totals.warnings}</b><span>open findings</span></div>
+        </div>
+      </section>
+      <div className="grid" style={{ gridTemplateColumns: "minmax(0, 3fr) minmax(320px, 2fr)", alignItems: "start" }}>
         <div className="stack">
-          <h2>Your cohorts</h2>
+          <div className="row spread">
+            <h2 style={{ margin: 0 }}>Your cohorts</h2>
+            {data && data.length > 3 && <input placeholder="filter by name…" value={query} onChange={(e) => setQuery(e.target.value)} style={{ width: 220 }} />}
+          </div>
           {error && <Alert kind="danger">{error}</Alert>}
           {loading && <Spinner />}
-          {data?.length === 0 && <div className="card empty"><h2>No cohorts yet</h2><p>Import data or create a demo cohort on the right.</p></div>}
-          {data?.map((c) => (
-            <div key={c.name} className="card cohort-card" onClick={() => nav(`/c/${c.name}`)}>
-              <div>
-                <div className="row"><b>{c.title}</b>{c.parent && <span className="chip">sub-cohort of {c.parent.split("/").pop()}</span>}</div>
-                <div className="small muted">{c.description || c.source}</div>
-                {c.derived_by && <div className="small"><code>{c.derived_by}</code></div>}
-              </div>
-              <div className="row">
-                <div className="kpi"><div className="v" style={{ fontSize: 20 }}>{c.n_encounters.toLocaleString()}</div><div className="l">encounters</div></div>
-                <button className="danger sm" onClick={async (e) => {
-                  e.stopPropagation();
-                  if (!confirm(`Delete cohort “${c.title}” and all its files?`)) return;
-                  await api.deleteCohort(c.name); toast("Cohort deleted"); reload();
-                }}>Delete</button>
-              </div>
+          {data?.length === 0 && (
+            <div className="card empty">
+              <h2>No cohorts yet</h2>
+              <p className="muted">Import a file or folder on the right, or generate a demo cohort to see what DEA does.</p>
+              <div className="steps">{STEPS.map(([t, d], i) => <div key={t} className="step"><span className="n">{i + 1}</span><div><b>{t}</b><div className="small muted">{d}</div></div></div>)}</div>
             </div>
-          ))}
+          )}
+          <div className="cohort-grid">
+            {tree.map(({ c, depth }) => <CohortCard key={c.name} c={c} depth={depth} onOpen={() => nav(`/c/${c.name}`)} onDelete={async () => {
+              if (!confirm(`Delete cohort “${c.title}” and all its files?`)) return;
+              await api.deleteCohort(c.name); toast("Cohort deleted"); reload();
+            }} />)}
+          </div>
+          {data && data.length > 0 && (
+            <div className="steps compact">{STEPS.map(([t, d], i) => <div key={t} className="step"><span className="n">{i + 1}</span><div><b>{t}</b><div className="small muted">{d}</div></div></div>)}</div>
+          )}
         </div>
         <Card title="Add data">
           <Tabs tabs={["Import", "Demo"]} value={tab} onChange={setTab} />
@@ -42,6 +65,66 @@ export function Cohorts() {
         </Card>
       </div>
     </>
+  );
+}
+
+function buildTree(list: CohortInfo[], query: string): { c: CohortInfo; depth: number }[] {
+  const q = query.trim().toLowerCase();
+  const byName = new Map(list.map((c) => [c.name, c]));
+  const children = new Map<string | null, CohortInfo[]>();
+  for (const c of list) {
+    const parent = c.parent ? c.parent.split("/").pop()! : null;
+    const key = parent && byName.has(parent) ? parent : null;
+    (children.get(key) ?? children.set(key, []).get(key)!).push(c);
+  }
+  const out: { c: CohortInfo; depth: number }[] = [];
+  const walk = (key: string | null, depth: number) => {
+    for (const c of (children.get(key) ?? []).sort((a, b) => b.created_at.localeCompare(a.created_at))) {
+      if (!q || c.title.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)) out.push({ c, depth });
+      walk(c.name, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return out;
+}
+
+function Spark({ bins }: { bins: number[] | null }) {
+  if (!bins || bins.length === 0) return <div className="spark empty" title="Length-of-stay distribution appears after the first profile" />;
+  const max = Math.max(...bins, 1);
+  return (
+    <div className="spark" title="Length of stay, 0–30 days">
+      {bins.map((b, i) => <span key={i} style={{ height: `${Math.max(8, (b / max) * 100)}%` }} />)}
+    </div>
+  );
+}
+
+function CohortCard({ c, depth, onOpen, onDelete }: { c: CohortInfo; depth: number; onOpen: () => void; onDelete: () => void }) {
+  const when = new Date(c.created_at);
+  return (
+    <div className="card cohort-card" style={{ marginLeft: depth * 22 }} onClick={onOpen} role="link" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onOpen()}>
+      <div className="cohort-head">
+        <div style={{ minWidth: 0 }}>
+          <div className="row" style={{ gap: 8 }}>
+            {depth > 0 && <span className="muted">↳</span>}
+            <b className="cohort-title">{c.title}</b>
+            {c.format && <span className="chip">{c.format}</span>}
+            {c.site_column && <span className="chip on" title={`site column ${c.site_column}`}>multi-site</span>}
+            {c.n_warnings > 0 && <span className="chip warn">{c.n_warnings} finding{c.n_warnings > 1 ? "s" : ""}</span>}
+          </div>
+          <div className="small muted ellipsis">{c.derived_by ? <code>{c.derived_by}</code> : (c.description || c.source || "—")}</div>
+        </div>
+        <button className="ghost sm" title="Delete cohort" onClick={(e) => { e.stopPropagation(); onDelete(); }}>×</button>
+      </div>
+      <div className="cohort-body">
+        <div className="cohort-kpis">
+          <div><b>{c.n_encounters.toLocaleString()}</b><span>encounters</span></div>
+          <div><b>{c.n_variables}</b><span>variables</span></div>
+          <div><b>{c.n_tags}</b><span>tags</span></div>
+        </div>
+        <Spark bins={c.los_hist} />
+      </div>
+      <div className="small muted cohort-foot">{when.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}{c.n_filters ? ` · ${c.n_filters} saved filter${c.n_filters > 1 ? "s" : ""}` : ""}</div>
+    </div>
   );
 }
 

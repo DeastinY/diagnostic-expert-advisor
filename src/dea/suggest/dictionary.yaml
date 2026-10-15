@@ -53,6 +53,7 @@
   - systolischer druck
   - 220050
   - 220179
+  - systolic blood pressure
   loinc: 8480-6
   ucum: mm[Hg]
 - name: spo2
@@ -372,7 +373,7 @@
   label: Body weight
   unit: kg
   range:
-  - 20
+  - 0.4
   - 400
   role: demographic
   fill: forward
@@ -401,6 +402,8 @@
   - '50931'
   - '220621'
   - '225664'
+  - 2339-0
+  - glucose [mass/volume] in blood
 - name: hemoglobin
   label: Hemoglobin
   unit: g/dL
@@ -457,7 +460,7 @@
   loinc: 8302-2
   ucum: cm
   range:
-  - 40
+  - 20
   - 250
   role: demographic
   fill: forward
@@ -482,3 +485,50 @@
   - foley
   - '226559'
   - '226560'
+- name: dbp
+  label: Diastolic blood pressure
+  unit: mmHg
+  loinc: 8462-4
+  ucum: mm[Hg]
+  range:
+  - 10
+  - 200
+  role: vital_sign
+  fill: interpolate
+  synonyms:
+  - dbp
+  - diastolic
+  - diastolic blood pressure
+  - arterial blood pressure diastolic
+  - non invasive blood pressure diastolic
+  - diastolischer blutdruck
+  - '220051'
+  - '220180'
+- name: bmi
+  label: Body mass index
+  unit: kg/m2
+  loinc: 39156-5
+  ucum: kg/m2
+  range:
+  - 8
+  - 100
+  role: demographic
+  fill: forward
+  synonyms:
+  - bmi
+  - body mass index
+- name: hba1c
+  label: Hemoglobin A1c
+  unit: '%'
+  loinc: 4548-4
+  ucum: '%'
+  range:
+  - 2
+  - 25
+  role: laboratory
+  fill: forward
+  synonyms:
+  - hba1c
+  - hemoglobin a1c
+  - glycated hemoglobin
+  - '50852'

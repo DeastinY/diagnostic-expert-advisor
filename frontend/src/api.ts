@@ -2,8 +2,10 @@
 export type Where = string[];
 
 export interface CohortInfo {
-  name: string; title: string; n_encounters: number; description: string;
+  name: string; title: string; n_encounters: number; n_variables: number; description: string;
   parent: string | null; derived_by: string | null; created_at: string; source: string;
+  format: string | null; site_column: string | null; n_tags: number; n_filters: number; n_warnings: number;
+  los_hist: number[] | null;
 }
 export interface Rule { label: string; where: string; description: string }
 export interface Processing {
@@ -37,9 +39,10 @@ export interface Check {
 export interface SiteComparison {
   column: string | null; candidates: string[]; configured: string | null;
   sizes?: { n: number; [k: string]: unknown }[];
+  shown?: { sites: number; of: number; overlay_sites: number; variables: number; of_variables: number };
   profile: { site: string; variable: string; n_encounters: number; coverage: number; n_obs: number; median: number | null; p25: number | null; p75: number | null; interval_s: number | null }[];
   checks: Check[];
-  charts: { distributions?: object | null; coverage?: object | null; sampling?: object | null };
+  charts: { distributions?: object | null; coverage?: object | null; sampling?: object | null; los?: object | null };
 }
 export interface UnitReport { variable: string; canonical: string; label: string; seen: Record<string, number>; converted: Record<string, number>; unconvertible: Record<string, number>; mixed: boolean }
 export interface ImportReport {
