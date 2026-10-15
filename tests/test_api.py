@@ -73,7 +73,11 @@ def test_charts(client: TestClient) -> None:
         params={"static_column": "age", "variable": "HR", "by": "sex"},
     )
     body = r.json()
-    assert {"los", "coverage", "tags", "static", "variable"} <= set(body)
+    assert {"los", "coverage_heatmap", "tags", "static", "variable"} <= set(body)
+    assert body["coverage_heatmap"]["mark"]["type"] == "rect"
+    assert body["variable"]["layer"][1]["mark"]["type"] == "boxplot"
+    prof = client.get("/api/cohorts/unit/charts/profile", params={"dark": True}).json()
+    assert prof["gallery"]["$schema"] and "observations" in prof
     assert body["los"]["$schema"].startswith("https://vega.github.io/schema/vega-lite")
     t = client.get(
         "/api/cohorts/unit/charts/trajectory", params={"variable": "HR", "every": "4h", "by": "sex"}
