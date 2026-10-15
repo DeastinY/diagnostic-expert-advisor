@@ -8,7 +8,7 @@ from typing import Any, Literal
 import polars as pl
 
 from dea.core.config import Rule
-from dea.core.model import ENCOUNTER_ID, TIME, Cohort, collect
+from dea.core.model import ENCOUNTER_ID, Cohort
 from dea.profile import CohortProfile, VariableProfile, profile_cohort
 from dea.suggest.vocab import Concept, load_dictionary
 
@@ -37,6 +37,7 @@ class Suggestion:
     action: dict[str, Any] | None = None
     confidence: float = 1.0
     variables: list[str] = field(default_factory=list)
+    severity: str | None = None  # set for quality checks: info, warning, error
 
     @property
     def applicable(self) -> bool:
@@ -96,25 +97,22 @@ def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Sugges
             )
         )
 
-    # 2. plausibility / units
-    for var, (concept, _) in matches.items():
-        prof = by_name[var]
-        if concept.range and prof.p01 is not None and prof.p99 is not None:
-            lo, hi = concept.range
-            if prof.p99 > hi * 1.5 or prof.p01 < lo / 1.5:
-                out.append(
-                    Suggestion(
-                        id=f"unit:{var}",
-                        kind="quality",
-                        title=f"'{var}' values look out of range for {concept.label}",
-                        detail=(
-                            f"1st-99th percentile {prof.p01:.3g}-{prof.p99:.3g}, expected within "
-                            f"{lo}-{hi} {concept.unit}. Check the unit or the mapping."
-                        ),
-                        confidence=0.7,
-                        variables=[var],
-                    )
-                )
+    # 2. data quality checks (units, plausible ranges, clusters, duplicates, time)
+    from dea.quality.checks import run_checks  # local import: checks use the dictionary
+
+    for c in run_checks(cohort, profile):
+        out.append(
+            Suggestion(
+                id=f"check:{c.id}",
+                kind="quality",
+                title=c.title,
+                detail=c.detail,
+                action=c.action,
+                confidence={"error": 0.9, "warning": 0.7, "info": 0.5}[c.severity],
+                variables=c.variables,
+                severity=c.severity,
+            )
+        )
 
     # 3. static attributes recorded as time series; identifiers; constants
     for var, prof in by_name.items():
@@ -232,26 +230,25 @@ def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Sugges
             )
         )
     for s in profile.static_columns:
-        if s.kind == "categorical" and s.top_values and len(s.top_values) <= 6:
-            for value, _ in s.top_values:
-                label = f"{s.name} = {value}"
-                if label in existing:
-                    continue
-                out.append(
-                    Suggestion(
-                        id=f"filter:{label}",
-                        kind="filter",
-                        title=f"Filter '{label}'",
-                        detail=f"Encounters with {s.name} equal to {value}.",
-                        action={
-                            "filter": {
-                                "label": label,
-                                "where": f"{s.name} = '{value}'",
-                                "description": "",
-                            }
-                        },
-                    )
+        if s.kind == "boolean":
+            values = [(v, f"{s.name} = true") for v, _ in s.top_values if v == "true"]
+        elif s.kind == "categorical" and s.top_values and len(s.top_values) <= 6:
+            values = [(v, f"{s.name} = '{v}'") for v, _ in s.top_values]
+        else:
+            continue
+        for value, where in values:
+            label = f"{s.name} = {value}"
+            if label in existing:
+                continue
+            out.append(
+                Suggestion(
+                    id=f"filter:{label}",
+                    kind="filter",
+                    title=f"Filter '{label}'",
+                    detail=f"Encounters with {s.name} equal to {value}.",
+                    action={"filter": {"label": label, "where": where, "description": ""}},
                 )
+            )
 
     # 6. default plots
     if not cfg.plots:
@@ -272,52 +269,6 @@ def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Sugges
                 )
             )
 
-    # 7. quality
-    empty = cohort.features().filter(pl.col("n_observations") == 0).height
-    if empty:
-        out.append(
-            Suggestion(
-                id="quality:empty",
-                kind="quality",
-                title=f"{empty} encounter(s) without observations",
-                detail="They appear in the static table only; consider excluding them.",
-                action={
-                    "filter": {
-                        "label": "Has observations",
-                        "where": "n_observations > 0",
-                        "description": "",
-                    }
-                },
-            )
-        )
-    negative = collect(
-        cohort.dynamic.filter(pl.col(TIME) < pl.duration(seconds=0)).select(pl.len())
-    ).item()
-    if negative:
-        out.append(
-            Suggestion(
-                id="quality:negative",
-                kind="quality",
-                title=f"{negative} observation(s) before admission",
-                detail=(
-                    "Negative time offsets usually mean the admission time is later than the "
-                    "first record."
-                ),
-                confidence=0.8,
-            )
-        )
-    low = [v.name for v in profile.variables if "low_coverage" in v.flags]
-    if low:
-        out.append(
-            Suggestion(
-                id="quality:coverage",
-                kind="quality",
-                title=f"{len(low)} variable(s) present in fewer than 10% of encounters",
-                detail=", ".join(low[:15]) + (" …" if len(low) > 15 else ""),
-                variables=low,
-                confidence=0.6,
-            )
-        )
     _ = canonical_present
     return out
 
@@ -333,8 +284,12 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
     rules_filter: list[Rule] = []
     plots: list[str] | None = None
     processing: dict[str, Any] | None = None
+    fixes: list[dict[str, Any]] = []
+    dedupe = False
     for s in suggestions:
         a = s.action or {}
+        fixes += [a["fix"]] if "fix" in a else []
+        dedupe = dedupe or bool(a.get("dedupe"))
         renames.update(a.get("rename", {}))
         labels.update(a.get("label", {}))
         units.update({k: v for k, v in a.get("unit", {}).items() if v})
@@ -348,7 +303,12 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
             plots = a["plots"]
         if "processing" in a:
             processing = a["processing"]
-    out = cohort.move_to_static([v for v in to_static if v in cohort.variables])
+    out = cohort
+    for f in fixes:
+        out = out.fix_values(f["variable"], f["where"], f.get("expr"), f.get("description", ""))
+    if dedupe:
+        out = out.dedupe()
+    out = out.move_to_static([v for v in to_static if v in cohort.variables])
     out = out.rename_variables(renames)
     cfg = out.config
     cfg.variable_labels.update(labels)

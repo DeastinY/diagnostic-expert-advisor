@@ -34,6 +34,17 @@ class Rule(BaseModel):
         return value
 
 
+class ValueFix(BaseModel):
+    """A recorded rewrite of observation values (unit repair, implausible values dropped)."""
+
+    variable: str
+    where: str = Field(description="SQL condition over `value` selecting the affected rows")
+    expr: str | None = Field(
+        default=None, description="SQL expression for the new value; None drops the rows"
+    )
+    description: str = ""
+
+
 class ProcessingConfig(BaseModel):
     """How to turn irregular long-format observations into a regular wide frame."""
 
@@ -63,6 +74,12 @@ class CohortConfig(BaseModel):
     variable_map: dict[str, str] = Field(
         default_factory=dict, description="Source variable name -> canonical name, as applied"
     )
+    variable_codes: dict[str, str] = Field(
+        default_factory=dict, description="Variable -> LOINC code, when known"
+    )
+    value_fixes: list[ValueFix] = Field(
+        default_factory=list, description="Value rewrites applied to the stored observations"
+    )
     feature_variables: list[str] | None = Field(
         default=None,
         description="Variables aggregated in the feature table; default: the 200 most observed",
@@ -90,6 +107,9 @@ class CohortConfig(BaseModel):
         new.plots = [ren(v) for v in self.plots]
         new.variable_labels = {ren(k): v for k, v in self.variable_labels.items()}
         new.variable_units = {ren(k): v for k, v in self.variable_units.items()}
+        new.variable_codes = {ren(k): v for k, v in self.variable_codes.items()}
+        for fix in new.value_fixes:
+            fix.variable = ren(fix.variable)
         new.processing.drop_variables = [ren(v) for v in self.processing.drop_variables]
         new.processing.fill_overrides = {
             ren(k): v for k, v in self.processing.fill_overrides.items()

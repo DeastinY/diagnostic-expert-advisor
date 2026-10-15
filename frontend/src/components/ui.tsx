@@ -32,6 +32,29 @@ export function Alert({ children, kind }: { children: ReactNode; kind?: "danger"
   return <div className={`alert${kind ? ` ${kind}` : ""}`}>{children}</div>;
 }
 
+export function SeverityChip({ severity }: { severity: "info" | "warning" | "error" | null | undefined }) {
+  if (!severity) return null;
+  const cls = severity === "error" ? "danger" : severity === "warning" ? "warn" : "info";
+  return <span className={`chip ${cls}`}>{severity}</span>;
+}
+
+export function ChecksList({ checks, empty = "No findings." }: { checks: { id: string; severity: "info" | "warning" | "error"; title: string; detail: string; action?: unknown }[]; empty?: string }) {
+  if (checks.length === 0) return <p className="muted small">{empty}</p>;
+  return (
+    <div className="checks">
+      {checks.map((c) => (
+        <div key={c.id} className="check">
+          <SeverityChip severity={c.severity} />
+          <div>
+            <div><b>{c.title}</b>{c.action ? <span className="muted small"> · fix available after import</span> : null}</div>
+            <div className="small muted">{c.detail}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function Tabs({ tabs, value, onChange }: { tabs: string[]; value: string; onChange: (t: string) => void }) {
   return (
     <div className="tabs">

@@ -47,6 +47,7 @@ def _cmd_import(args: argparse.Namespace) -> int:
             "time_col",
             "variable_col",
             "value_col",
+            "unit_col",
             "time_unit",
             "table_kind",
         )
@@ -54,6 +55,7 @@ def _cmd_import(args: argparse.Namespace) -> int:
     }
     cohort, report = import_path(args.source, name=args.name, static_path=args.static, **overrides)
     cohort.save(args.out)
+    report.save(args.out)
     for line in report.summary_lines():
         print(line)
     print(f"saved to {args.out}")
@@ -196,6 +198,39 @@ def _cmd_nlp(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_check(args: argparse.Namespace) -> int:
+    from dea.io import load_cohort
+    from dea.quality import run_checks
+
+    found = run_checks(load_cohort(args.cohort))
+    if args.json:
+        print(json.dumps([c.to_dict() for c in found], indent=2))
+        return 0
+    if not found:
+        print("no findings")
+    for c in found:
+        fix = "  [fix available]" if c.action else ""
+        print(f"{c.severity:>7}  {c.title}{fix}")
+        print(f"         {c.detail}")
+    return 1 if any(c.severity == "error" for c in found) else 0
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    from dea.io import load_cohort
+
+    cohort = load_cohort(args.cohort)
+    if args.fhir:
+        from dea.standards.fhir import export_fhir
+
+        written = export_fhir(cohort, args.out)
+        print(", ".join(f"{n} {k}" for k, n in written.items()), f"-> {args.out}")
+        return 0
+    out = Path(args.out)
+    cohort.wide(every=args.every, with_static=True).write_parquet(out)
+    print(f"wrote {out}")
+    return 0
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     from dea.io import load_cohort
     from dea.report import write_report
@@ -246,9 +281,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--time-col")
     p.add_argument("--variable-col")
     p.add_argument("--value-col")
+    p.add_argument("--unit-col", help="per-row unit column of a long table")
     p.add_argument("--time-unit", choices=["auto", "datetime", "s", "ms", "m", "h", "d"])
     p.add_argument("--table-kind", choices=["long", "wide"])
     p.set_defaults(func=_cmd_import)
+
+    p = sub.add_parser("check", help="run the data quality checks on a cohort")
+    p.add_argument("cohort")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_check)
+
+    p = sub.add_parser("export", help="export a cohort as a wide Parquet table or FHIR NDJSON")
+    p.add_argument("cohort")
+    p.add_argument("out")
+    p.add_argument("--fhir", action="store_true", help="write FHIR R4 NDJSON resources")
+    p.add_argument("--every", help="resampling grid for the wide table, e.g. 1h")
+    p.set_defaults(func=_cmd_export)
 
     p = sub.add_parser("info", help="summarize a cohort")
     p.add_argument("cohort")

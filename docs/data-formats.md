@@ -69,3 +69,9 @@ cohort, report = import_wide(df, "patient", "hours", time_unit="h", static_cols=
 print(report.summary_lines())
 cohort.save("data/my_cohort")
 ```
+
+## FHIR R4 and coding standards
+
+FHIR bulk exports (NDJSON) and Bundles import directly, and any cohort exports as FHIR
+resources with LOINC, UCUM and ICD codes. Units are normalized per row during import, and
+ICD-9/ICD-10 diagnoses become `dx_<group>` static columns. See [harmonization.md](harmonization.md).

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type Detection } from "../api";
-import { Alert, Card, Spinner, Tabs, toast, useAsync } from "../components/ui";
+import { api, type Detection, type ImportReport } from "../api";
+import { Alert, Card, ChecksList, Spinner, Tabs, toast, useAsync } from "../components/ui";
 
 export function Cohorts() {
   const nav = useNavigate();
@@ -65,6 +65,40 @@ function DemoForm({ onDone }: { onDone: (name: string) => void }) {
   );
 }
 
+function ImportPreview({ report }: { report: ImportReport }) {
+  return (
+    <div className="stack" style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+      <div className="row">
+        <span className="chip on">{report.format}</span>
+        <span className="chip">{report.n_encounters} encounters</span>
+        <span className="chip">{report.n_variables} variables</span>
+        <span className="chip">{report.n_observations.toLocaleString()} observations</span>
+        {report.n_events > 0 && <span className="chip">{report.n_events.toLocaleString()} events</span>}
+      </div>
+      {report.warnings.map((w) => <Alert key={w}>{w}</Alert>)}
+      {report.unit_reports.length > 0 && (
+        <div>
+          <b className="small">Units harmonized</b>
+          <ul className="small muted" style={{ margin: "4px 0 0 16px" }}>
+            {report.unit_reports.map((u) => (
+              <li key={u.variable}>
+                <b>{u.variable}</b> → {u.label || u.canonical}
+                {Object.entries(u.converted).map(([k, n]) => ` · ${n.toLocaleString()} rows from ${k}`)}
+                {Object.entries(u.unconvertible).map(([k, n]) => ` · ${n.toLocaleString()} rows in ${k} not convertible`)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div>
+        <b className="small">Checks</b>
+        <ChecksList checks={report.checks} empty="No findings. Nothing in the data stood out." />
+      </div>
+      <p className="muted small">Nothing has been written yet. Import to save the cohort; fixes are offered on its profile page.</p>
+    </div>
+  );
+}
+
 function ImportForm({ onDone }: { onDone: (name: string) => void }) {
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
@@ -73,6 +107,7 @@ function ImportForm({ onDone }: { onDone: (name: string) => void }) {
   const [ov, setOv] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ImportReport | null>(null);
 
   const detect = async (p: string) => {
     setBusy("Inspecting…"); setErr(null);
@@ -95,7 +130,7 @@ function ImportForm({ onDone }: { onDone: (name: string) => void }) {
   );
   return (
     <div className="stack">
-      <p className="muted small">CSV, TSV or Parquet tables (long or wide), a zip of the v1 CSV tree, or a MIMIC-IV directory.</p>
+      <p className="muted small">CSV, TSV or Parquet tables (long or wide), a zip of the v1 CSV tree, a MIMIC-IV directory, or FHIR R4 resources (NDJSON or Bundle).</p>
       <div className="row">
         <input style={{ flex: 1 }} placeholder="/path/on/this/machine (file or folder)" value={path} onChange={(e) => setPath(e.target.value)} />
         <button onClick={() => path && detect(path)} disabled={!path}>Inspect</button>
@@ -119,7 +154,12 @@ function ImportForm({ onDone }: { onDone: (name: string) => void }) {
                 <label className="field">Shape
                   <select value={kind} onChange={(e) => setOv({ ...ov, table_kind: e.target.value })}><option value="long">long (one row per observation)</option><option value="wide">wide (one column per variable)</option></select>
                 </label>
-                {kind === "long" && <><Sel k="variable_col" label="Variable column" /><Sel k="value_col" label="Value column" /></>}
+                {kind === "long" && <><Sel k="variable_col" label="Variable column" /><Sel k="value_col" label="Value column" />
+                  <label className="field">Unit column (optional)
+                    <select value={ov.unit_col ?? det.unit_col ?? ""} onChange={(e) => setOv({ ...ov, unit_col: e.target.value })}>
+                      <option value="">none</option>{cols.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  </label></>}
               </div>
               {det.preview.length > 0 && (
                 <div className="table-wrap" style={{ maxHeight: 200 }}>
@@ -130,15 +170,24 @@ function ImportForm({ onDone }: { onDone: (name: string) => void }) {
             </>
           )}
           <label className="field">Cohort name<input value={name} onChange={(e) => setName(e.target.value)} /></label>
-          <button className="primary" disabled={!name || det.format === "unknown" || !!busy} onClick={async () => {
-            setBusy("Importing…"); setErr(null);
-            try {
-              const r = await api.import({ path: staged!, name, overrides: ov });
-              const rep = r.report as { n_encounters: number; n_variables: number; n_observations: number };
-              toast(`Imported ${rep.n_encounters} encounters, ${rep.n_variables} variables, ${rep.n_observations.toLocaleString()} observations`);
-              onDone(r.name);
-            } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
-          }}>Import</button>
+          <div className="row">
+            <button disabled={!name || det.format === "unknown" || !!busy} onClick={async () => {
+              setBusy("Checking…"); setErr(null); setPreview(null);
+              try { setPreview((await api.preview({ path: staged!, name, overrides: ov })).report); }
+              catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
+            }}>Check first</button>
+            <button className="primary" disabled={!name || det.format === "unknown" || !!busy} onClick={async () => {
+              setBusy("Importing…"); setErr(null);
+              try {
+                const r = await api.import({ path: staged!, name, overrides: ov });
+                const rep = r.report;
+                const n = rep.checks.filter((c) => c.severity !== "info").length;
+                toast(`Imported ${rep.n_encounters} encounters, ${rep.n_variables} variables, ${rep.n_observations.toLocaleString()} observations${n ? ` · ${n} check(s) to review` : ""}`);
+                onDone(r.name);
+              } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
+            }}>Import</button>
+          </div>
+          {preview && <ImportPreview report={preview} />}
         </div>
       )}
     </div>

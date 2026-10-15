@@ -1,6 +1,6 @@
 """Core data model: encounters, cohorts and their configuration."""
 
-from dea.core.config import CohortConfig, ProcessingConfig, Rule
+from dea.core.config import CohortConfig, ProcessingConfig, Rule, ValueFix
 from dea.core.model import (
     ENCOUNTER_ID,
     EVENT_SCHEMA,
@@ -29,6 +29,7 @@ __all__ = [
     "FilterError",
     "ProcessingConfig",
     "Rule",
+    "ValueFix",
     "format_duration",
     "parse_duration",
 ]

@@ -13,6 +13,7 @@ deterministic sample of encounters (``sampling.sampled_encounters`` says how man
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -365,6 +366,13 @@ def _static_profiles(static: pl.DataFrame) -> list[StaticColumnProfile]:
             prof.min, prof.max, prof.mean = _f(s.min()), _f(s.max()), _f(s.mean())
         elif dtype == pl.Boolean:
             prof.kind = "boolean"
+            counts = (
+                s.drop_nulls()
+                .cast(pl.String())
+                .value_counts(sort=True)
+                .filter(pl.col("count") >= MIN_CATEGORY_COUNT)
+            )
+            prof.top_values = [(str(v), int(c)) for v, c in counts.iter_rows()]
         elif dtype in (pl.String, pl.Categorical, pl.Enum):
             if n_unique == n and n > 20:
                 prof.kind = "identifier"
@@ -378,12 +386,22 @@ def _static_profiles(static: pl.DataFrame) -> list[StaticColumnProfile]:
                     .head(MAX_CATEGORIES)
                 )
                 prof.top_values = [(str(v), int(c)) for v, c in counts.iter_rows()]
+            elif _looks_like_codes(s):
+                prof.kind = "codes"  # ICD lists and the like: short tokens, no prose
             else:
                 prof.kind = "text"
         elif dtype.is_temporal():
             prof.kind = "temporal"
         out.append(prof)
     return out
+
+
+_CODES = re.compile(r"^[A-Za-z0-9.\-/]{1,12}(\|[A-Za-z0-9.\-/]{1,12})*$")
+
+
+def _looks_like_codes(s: pl.Series) -> bool:
+    sample = s.drop_nulls().cast(pl.String()).head(200)
+    return sample.len() > 0 and bool(sample.str.contains(_CODES.pattern).all())
 
 
 def _f(x: Any) -> float | None:

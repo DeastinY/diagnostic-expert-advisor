@@ -73,9 +73,25 @@ dea import /path/to/v1/cohort data/migrated        # the DEA v1 static.csv + <id
 
 `dea import <mimic-root>` reads the PhysioNet layout (`icu/icustays`, `icu/chartevents`,
 `icu/d_items`, `hosp/patients`, `hosp/admissions`, `hosp/labevents`, `hosp/d_labitems`,
-optional `note/discharge`): one encounter per ICU stay, items named by their dictionary labels,
-text values as events, labs attached to the stay window. `dea synth out --mimic --n 50` writes
-synthetic tables in the same layout for development without credentials.
+`hosp/diagnoses_icd`, `hosp/d_icd_diagnoses`, optional `note/discharge`): one encounter per
+ICU stay, items named by their dictionary labels, text values as events, labs attached to the
+stay window, per-row units (`valueuom`) normalized, ICD-9/ICD-10 diagnoses as `dx_<group>`
+columns. `dea synth out --mimic --n 50` writes synthetic tables in the same layout (including
+MIMIC's °F/°C temperature items and mixed ICD versions) for development without credentials.
+
+## Checks and harmonization
+
+Every import runs data quality checks before anything is written: mixed units (converted on
+the spot, with a report), values outside hard physiological limits with the unit that would
+explain them, two-cluster distributions, duplicates, time offsets before admission or months
+after it, empty encounters, numbers stored as text. `dea check <cohort>`, the "Check first"
+button on the import form and the profile page show them; fixes apply with one click and are
+recorded in `cohort.yaml`.
+
+Measurements harmonize through the dictionary's LOINC and UCUM codes, diagnoses through
+cross-version ICD groups (`dx_sepsis`, `dx_heart_failure`, ...), and cohorts import from and
+export to FHIR R4 (`dea export <cohort> <dir> --fhir`). See
+[`docs/harmonization.md`](docs/harmonization.md).
 
 ## Free text: local NLP connectors
 
@@ -172,7 +188,9 @@ pytest
 Alpha. Tested on synthetic data up to 2,000 encounters / 54 million observations (feature table
 in ~3 s, profile in ~4 s, single-encounter lookup in 20 ms, all under 2.5 GB); storage is
 designed for MIMIC-sized cohorts, see [`docs/architecture.md`](docs/architecture.md). The MIMIC
-importer is tested on synthetic MIMIC-shaped tables, not yet on the real demo. The GLiNER and
+and FHIR importers are tested on synthetic MIMIC-shaped tables and on DEA's own FHIR export,
+not yet on the real MIMIC demo or a hospital FHIR server. The ICD group definitions and the
+unit conversion table are small and meant to be extended per site. The GLiNER and
 transformer connectors are implemented against their documented APIs but their weights could
 not be downloaded in the development sandbox. The SLURM backend is not yet validated on a real
 cluster.

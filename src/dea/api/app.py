@@ -209,8 +209,9 @@ def create_app(
             src = write_mimic_demo(Path(tempfile.mkdtemp(prefix="dea-mimic-")), n_stays=body.n)
             cohort, report = import_path(src, name=body.name)
             cohort.save(target)
+            report.save(target)
             shutil.rmtree(src, ignore_errors=True)
-            return {"name": body.name, "report": report.__dict__}
+            return {"name": body.name, "report": report.to_dict()}
         write_synthetic(target, n_encounters=body.n, name=body.name)
         return {"name": body.name}
 
@@ -226,22 +227,38 @@ def create_app(
             "preview": preview,
         }
 
-    @app.post("/api/cohorts/import", status_code=201)
-    def cohort_import(body: ImportIn) -> dict[str, Any]:
+    def _import(body: ImportIn) -> tuple[Cohort, Any]:
         p = Path(body.path)
         if not p.exists():
             raise HTTPException(404, f"{p} does not exist")
-        name = body.name or p.stem
         try:
-            cohort, report = import_path(p, name=name, **body.overrides)
+            return import_path(p, name=body.name or p.stem, **body.overrides)
         except Exception as exc:  # import errors are user errors (bad mapping, bad file)
             raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/cohorts/preview")
+    def cohort_preview(body: ImportIn) -> dict[str, Any]:
+        """Import without writing: the report with unit conversions and checks."""
+        cohort, report = _import(body)
+        return {"name": cohort.name, "report": report.to_dict()}
+
+    @app.post("/api/cohorts/import", status_code=201)
+    def cohort_import(body: ImportIn) -> dict[str, Any]:
+        cohort, report = _import(body)
+        name = cohort.name
         target = store.data_dir / name
         if target.exists():
             shutil.rmtree(target)
         cohort.save(target)
+        report.save(target)
         store.invalidate(name)
-        return {"name": name, "report": report.__dict__}
+        return {"name": name, "report": report.to_dict()}
+
+    @app.get("/api/cohorts/{name}/import")
+    def import_report(name: str) -> dict[str, Any]:
+        from dea.io import ImportReport
+
+        return ImportReport.load_dict(store.path(name)) or {}
 
     @app.post("/api/cohorts/upload", status_code=201)
     async def cohort_upload(file: UploadFile, name: str | None = None) -> dict[str, Any]:
@@ -538,6 +555,12 @@ def create_app(
     def profile(name: str, where: Where = None) -> dict[str, Any]:
         return profile_cohort(_filtered(store.get(name), where)).to_dict()
 
+    @app.get("/api/cohorts/{name}/checks")
+    def checks(name: str) -> list[dict[str, Any]]:
+        from dea.quality import run_checks
+
+        return [c.to_dict() for c in run_checks(store.get(name))]
+
     @app.get("/api/cohorts/{name}/suggestions")
     def suggestions(name: str) -> list[dict[str, Any]]:
         from dea.suggest import suggest
@@ -616,6 +639,16 @@ def create_app(
         out = Path(tempfile.mkdtemp(prefix="dea-export-")) / f"{name}_wide.parquet"
         cohort.wide(every=every, fill=fill, with_static=True).write_parquet(out)
         return FileResponse(out, filename=out.name, media_type="application/octet-stream")
+
+    @app.get("/api/cohorts/{name}/export/fhir")
+    def export_fhir_bundle(name: str, where: Where = None) -> FileResponse:
+        from dea.standards.fhir import export_fhir
+
+        cohort = _filtered(store.get(name), where)
+        tmp = Path(tempfile.mkdtemp(prefix="dea-fhir-"))
+        export_fhir(cohort, tmp / name)
+        archive = shutil.make_archive(str(tmp / f"{name}_fhir"), "zip", tmp, name)
+        return FileResponse(archive, filename=Path(archive).name, media_type="application/zip")
 
     @app.get("/api/cohorts/{name}/entities")
     def entities(name: str, min_encounters: int = 5) -> dict[str, Any]:
