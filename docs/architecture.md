@@ -5,7 +5,10 @@ above it, so a researcher can use the data model in a notebook without ever star
 UI, and the UI never contains logic that the library does not expose.
 
 ```
-dea.ui        Streamlit app: cohorts & import, overview, encounters, profile & advice, compute
+frontend/     React + TypeScript app (Vite); charts rendered from Vega-Lite specs made in Python
+dea.api       FastAPI backend over the core; serves the built frontend
+dea.nlp       local NLP connectors (spaCy, GLiNER, transformers, Presidio, LLM) and entity pipeline
+dea.suggest   clinical dictionary + rule-based suggestions after import
 dea.advise    optional AI advisor (OpenAI-compatible); input = CohortProfile only
 dea.profile   deterministic profiling: sampling, coverage, distributions, flags
 dea.compute   Backend protocol: serial, local process pool, SLURM (submitit)

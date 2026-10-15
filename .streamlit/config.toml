@@ -1,9 +1,0 @@
-# Theme for `streamlit run src/dea/ui/app.py` from a checkout; `dea ui` passes the same values.
-[theme]
-primaryColor = "#2a78d6"
-backgroundColor = "#fcfcfb"
-secondaryBackgroundColor = "#f1f1ee"
-textColor = "#0b0b0b"
-
-[browser]
-gatherUsageStats = false

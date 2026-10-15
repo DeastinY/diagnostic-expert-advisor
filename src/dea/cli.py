@@ -144,18 +144,6 @@ def _cmd_rename(args: argparse.Namespace) -> int:
     return 0
 
 
-THEME_ARGS = [
-    "--theme.primaryColor",
-    "#2a78d6",
-    "--theme.backgroundColor",
-    "#fcfcfb",
-    "--theme.secondaryBackgroundColor",
-    "#f1f1ee",
-    "--theme.textColor",
-    "#0b0b0b",
-]
-
-
 def _cmd_suggest(args: argparse.Namespace) -> int:
     from dea.io import load_cohort
     from dea.suggest import apply_suggestions, suggest
@@ -231,30 +219,6 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         "dea.api.app:create_app", factory=True, host=args.host, port=args.port, reload=args.reload
     )
     return 0
-
-
-def _cmd_ui(args: argparse.Namespace) -> int:
-    try:
-        from streamlit.web import cli as stcli
-    except ImportError:
-        print("streamlit is not installed: pip install dea[ui]", file=sys.stderr)
-        return 1
-    if args.data_dir:
-        os.environ["DEA_DATA_DIR"] = str(Path(args.data_dir).resolve())
-    app = Path(__file__).parent / "ui" / "app.py"
-    sys.argv = [
-        "streamlit",
-        "run",
-        str(app),
-        "--server.headless",
-        "true" if args.headless else "false",
-        "--browser.gatherUsageStats",
-        "false",
-        *THEME_ARGS,
-    ]
-    if args.port:
-        sys.argv += ["--server.port", str(args.port)]
-    return int(stcli.main() or 0)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -352,11 +316,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reload", action="store_true")
     p.set_defaults(func=_cmd_serve)
 
-    p = sub.add_parser("ui", help="start the legacy Streamlit app")
-    p.add_argument("--data-dir")
-    p.add_argument("--port", type=int)
-    p.add_argument("--headless", action="store_true")
-    p.set_defaults(func=_cmd_ui)
     return parser
 
 

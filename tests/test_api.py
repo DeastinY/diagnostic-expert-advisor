@@ -133,3 +133,35 @@ def test_demo_and_processing(client: TestClient) -> None:
     )
     assert "Heart Rate" in client.get("/api/cohorts/m1").json()["variables"]
     assert client.get("/api/health").json()["status"] == "ok"
+
+
+def test_advise_status_and_apply(client: TestClient) -> None:
+    st = client.get("/api/cohorts/unit/advise").json()
+    assert set(st) >= {"installed", "configured", "model", "payload"}
+    assert "sampling" in st["payload"]
+    rec = {
+        "summary": "s",
+        "resample_every": "30m",
+        "aggregate": "mean",
+        "default_fill": "forward",
+        "variables": [
+            {
+                "variable": "MAP",
+                "label": "Mean arterial pressure",
+                "canonical_name": "map",
+                "role": "vital_sign",
+                "unit_guess": "mmHg",
+                "imputation": "interpolate",
+                "rationale": "r",
+            }
+        ],
+        "suggested_filters": [{"label": "Elderly", "where": "age >= 80", "description": ""}],
+        "plot_variables": ["MAP"],
+        "storage_notes": [],
+        "warnings": [],
+    }
+    r = client.post("/api/cohorts/unit/advise/apply", json={"recommendation": rec, "rename": True})
+    assert r.status_code == 200 and "map" in r.json()["variables"]
+    cfg = client.get("/api/cohorts/unit").json()["config"]
+    assert cfg["processing"]["resample_every"] == "30m" and cfg["variable_map"]["MAP"] == "map"
+    assert any(f["label"] == "Elderly" for f in cfg["filters"])
