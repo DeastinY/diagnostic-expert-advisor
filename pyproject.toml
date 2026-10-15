@@ -54,6 +54,7 @@ packages = ["src/dea"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/dea/suggest/dictionary.yaml" = "dea/suggest/dictionary.yaml"
+"src/dea/suggest/units.yaml" = "dea/suggest/units.yaml"
 
 [tool.ruff]
 line-length = 100

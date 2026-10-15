@@ -1,0 +1,46 @@
+# Unit aliases -> UCUM codes, and conversions between UCUM units.
+# Conversions are linear: value_to = value_from * factor + offset.
+aliases:
+  "/min": [/min, "1/min", bpm, "beats/min", "breaths/min", "insp/min", min-1, "per min"]
+  "mm[Hg]": [mmhg, "mm hg", torr]
+  "kPa": [kpa]
+  "cm[H2O]": [cmh2o, "cm h2o", "cmH2O"]
+  "%": ["%", percent, pct]
+  "1": [fraction, frac, ratio]
+  "Cel": ["°c", "c", celsius, degc, "deg c", "°C"]
+  "[degF]": ["°f", "f", fahrenheit, degf, "deg f", "°F"]
+  "mL": [ml, milliliter, millilitre, "mL"]
+  "L": [l, liter, litre]
+  "mL/kg": ["ml/kg", "mL/kg"]
+  "mL/cm[H2O]": ["ml/cmh2o", "mL/cmH2O"]
+  "[pH]": [ph, units, "[pH]"]
+  "mmol/L": ["mmol/l", mmol/L, "mmol per l"]
+  "mg/dL": ["mg/dl", mg/dL]
+  "mg/L": ["mg/l", mg/L]
+  "ug/L": ["ug/l", "µg/l", "mcg/l", "ng/ml", "ng/mL"]
+  "umol/L": ["umol/l", "µmol/l", "micromol/l"]
+  "g/dL": ["g/dl", g/dL]
+  "g/L": ["g/l"]
+  "10*9/L": ["10*9/l", "giga/l", "k/ul", "K/uL", "10^9/l", "x10^9/l", "10*3/ul", "thousand/ul"]
+  "ug/kg/min": ["ug/kg/min", "mcg/kg/min", "µg/kg/min", "mcgkgmin"]
+  "kg": [kg, kilogram]
+  "[lb_av]": [lb, lbs, pound, pounds]
+  "cm": [cm]
+  "[in_i]": [in, inch, inches]
+  "{score}": [points, score]
+conversions:
+  - { from: "[degF]", to: "Cel", factor: 0.5555555556, offset: -17.7777777778 }
+  - { from: "kPa", to: "mm[Hg]", factor: 7.50062 }
+  - { from: "%", to: "1", factor: 0.01 }
+  - { from: "L", to: "mL", factor: 1000 }
+  - { from: "[lb_av]", to: "kg", factor: 0.45359237 }
+  - { from: "[in_i]", to: "cm", factor: 2.54 }
+  - { from: "g/L", to: "g/dL", factor: 0.1 }
+  - { from: "mg/dL", to: "mg/L", factor: 10 }
+  - { from: "ug/L", to: "mg/L", factor: 0.001 }
+  # analyte-specific molar conversions (molar mass dependent)
+  - { from: "mmol/L", to: "mg/dL", factor: 18.0156, concept: glucose }
+  - { from: "umol/L", to: "mg/dL", factor: 0.0113122, concept: creatinine }
+  - { from: "umol/L", to: "mg/dL", factor: 0.0584795, concept: bilirubin }
+  - { from: "mg/dL", to: "mmol/L", factor: 0.111, concept: lactate }
+  - { from: "mmol/L", to: "mg/dL", factor: 9.009, concept: lactate }

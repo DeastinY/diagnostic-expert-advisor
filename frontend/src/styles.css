@@ -93,6 +93,11 @@ label.field > input, label.field > select { font-size: 13px; }
 .chip.on { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
 .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .chip.good { background: #e4f6e4; color: var(--good); border-color: transparent; }
+.chip.danger { background: var(--danger-soft, #fde8e8); color: var(--danger, #b42318); border-color: transparent; }
+.chip.info { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.checks { display: grid; gap: 6px; }
+.checks .check { display: grid; grid-template-columns: 72px 1fr; gap: 10px; align-items: start; padding: 6px 0; border-top: 1px solid var(--border); }
+.checks .check:first-child { border-top: 0; }
 .chip button { all: unset; cursor: pointer; font-weight: 700; line-height: 1; }
 .chip .k { color: var(--muted); }
 

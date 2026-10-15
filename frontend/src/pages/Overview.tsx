@@ -31,6 +31,7 @@ export function Overview() {
         <div className="row">
           <a className="btn sm" href={api.reportUrl(name, where)} target="_blank" rel="noreferrer">Report</a>
           <a className="btn sm" href={api.exportUrl(name, where, cfg!.processing.resample_every ?? "1h", cfg!.processing.fill)}>Export Parquet</a>
+          <a className="btn sm" href={api.fhirExportUrl(name, where)}>Export FHIR</a>
         </div>
       </div>
       <Card flat>
