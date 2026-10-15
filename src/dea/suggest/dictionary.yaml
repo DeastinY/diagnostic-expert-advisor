@@ -1,0 +1,171 @@
+# Clinical variable dictionary used for offline harmonization, unit checks and tag suggestions.
+# Each entry: canonical name, label, unit, plausible range, role, default fill, synonyms.
+# Synonyms are matched case-insensitively after normalizing spaces, underscores and punctuation.
+- name: heart_rate
+  label: Heart rate
+  unit: 1/min
+  range: [20, 250]
+  role: vital_sign
+  fill: interpolate
+  synonyms: [hr, heart rate, herzfrequenz, hf, pulse, 220045]
+- name: map
+  label: Mean arterial pressure
+  unit: mmHg
+  range: [20, 200]
+  role: vital_sign
+  fill: interpolate
+  synonyms: [map, mean arterial pressure, arterial blood pressure mean, mittlerer arterieller druck, nibp mean, 220052, 220181]
+- name: sbp
+  label: Systolic blood pressure
+  unit: mmHg
+  range: [40, 300]
+  role: vital_sign
+  fill: interpolate
+  synonyms: [sbp, sap, systolic, arterial blood pressure systolic, systolischer druck, 220050, 220179]
+- name: spo2
+  label: Peripheral oxygen saturation
+  unit: "%"
+  range: [40, 100]
+  role: vital_sign
+  fill: interpolate
+  synonyms: [spo2, o2 saturation pulseoxymetry, sauerstoffsaettigung, sao2 pulse, 220277]
+- name: respiratory_rate
+  label: Respiratory rate
+  unit: 1/min
+  range: [0, 70]
+  role: vital_sign
+  fill: interpolate
+  synonyms: [rr, af, respiratory rate, atemfrequenz, resp rate, 220210, af spontan]
+- name: temperature
+  label: Body temperature
+  unit: "°C"
+  range: [30, 43]
+  role: vital_sign
+  fill: forward
+  synonyms: [temp, temperature, temperature celsius, koerpertemperatur, koerperkerntemperatur, 223762]
+- name: fio2
+  label: Inspired oxygen fraction
+  unit: ""
+  range: [0.21, 1.0]
+  role: ventilation
+  fill: forward
+  synonyms: [fio2, inspired o2 fraction, 223835]
+- name: peep
+  label: PEEP
+  unit: cmH2O
+  range: [0, 30]
+  role: ventilation
+  fill: forward
+  synonyms: [peep, peep set, 220339]
+- name: tidal_volume
+  label: Tidal volume
+  unit: mL
+  range: [50, 1500]
+  role: ventilation
+  fill: forward
+  synonyms: [tidal volume, tidal volume observed, tidalvolumen, vt, 224685]
+- name: tidal_volume_per_kg
+  label: Tidal volume per kg IBW
+  unit: mL/kg
+  range: [1, 20]
+  role: ventilation
+  fill: forward
+  synonyms: [tidalvolume per kg, individuelles tidalvolumen pro kg idealem koerpergewicht, vt per kg]
+- name: compliance
+  label: Respiratory system compliance
+  unit: mL/cmH2O
+  range: [5, 200]
+  role: ventilation
+  fill: forward
+  synonyms: [compliance, 229661]
+- name: pao2
+  label: Arterial oxygen partial pressure
+  unit: mmHg
+  range: [20, 600]
+  role: blood_gas
+  fill: forward
+  synonyms: [pao2, arterial o2 pressure, pao2 ohne temp korrektur, 220224]
+- name: paco2
+  label: Arterial CO2 partial pressure
+  unit: mmHg
+  range: [10, 150]
+  role: blood_gas
+  fill: forward
+  synonyms: [paco2, arterial co2 pressure, paco2 ohne temp korrektur, 220235]
+- name: ph
+  label: Arterial pH
+  unit: ""
+  range: [6.6, 7.9]
+  role: blood_gas
+  fill: forward
+  synonyms: [ph, ph arterial, 223830, 50820]
+- name: pao2_fio2
+  label: Horowitz index (paO2/FiO2)
+  unit: mmHg
+  range: [20, 700]
+  role: blood_gas
+  fill: forward
+  synonyms: [horowitz, horowitz quotient, horowitz quotient ohne temp korrektur, pf ratio, p/f ratio, pao2/fio2, oxygenierungsindex]
+- name: lactate
+  label: Lactate
+  unit: mmol/L
+  range: [0.1, 30]
+  role: laboratory
+  fill: forward
+  synonyms: [lactate, laktat, laktat arteriell, 50813, 225668]
+- name: wbc
+  label: White blood cell count
+  unit: G/L
+  range: [0.1, 100]
+  role: laboratory
+  fill: forward
+  synonyms: [wbc, white blood cells, leukocytes, leukozyten, 51301]
+- name: crp
+  label: C-reactive protein
+  unit: mg/L
+  range: [0, 600]
+  role: laboratory
+  fill: forward
+  synonyms: [crp, c reactive protein, c-reactive protein, 50889]
+- name: procalcitonin
+  label: Procalcitonin
+  unit: ng/mL
+  range: [0, 200]
+  role: laboratory
+  fill: forward
+  synonyms: [pct, procalcitonin, 51652]
+- name: creatinine
+  label: Serum creatinine
+  unit: mg/dL
+  range: [0.1, 25]
+  role: laboratory
+  fill: forward
+  synonyms: [creatinine, kreatinin, 50912]
+- name: bilirubin
+  label: Total bilirubin
+  unit: mg/dL
+  range: [0, 60]
+  role: laboratory
+  fill: forward
+  synonyms: [bilirubin, bilirubin total, bilirubin ges, 50885]
+- name: norepinephrine
+  label: Norepinephrine rate
+  unit: "µg/kg/min"
+  range: [0, 5]
+  role: medication
+  fill: zero
+  synonyms: [norepinephrine, noradrenalin, norepinephrin intravenoes kontinuierlich, 221906]
+- name: sofa
+  label: SOFA score
+  unit: points
+  range: [0, 24]
+  role: score
+  fill: forward
+  synonyms: [sofa, sofa score, organversagen sofa score]
+- name: weight
+  label: Body weight
+  unit: kg
+  range: [20, 400]
+  role: demographic
+  fill: forward
+  synonyms: [weight, admission weight, admission weight kg, gewicht, 226512]

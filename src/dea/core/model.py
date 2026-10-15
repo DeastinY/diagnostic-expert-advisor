@@ -539,6 +539,89 @@ class Cohort:
             _full=self._full,
         )
 
+    def derive(
+        self,
+        path: Path | str,
+        where: str | Iterable[str],
+        name: str | None = None,
+        description: str = "",
+    ) -> Cohort:
+        """Save the encounters matching ``where`` as a new cohort with lineage recorded.
+
+        Only the selected encounters are streamed to the new directory; the config is copied
+        with ``parent`` and ``derived_by`` set so sub-cohorts stay traceable.
+        """
+        rules = [where] if isinstance(where, str) else list(where)
+        sub = self.filter(rules)
+        config = self.config.model_copy(deep=True)
+        config.name = name or Path(path).name
+        config.description = description or f"Sub-cohort of {self.name}: {' AND '.join(rules)}"
+        config.parent = str(self.root) if self.root else self.name
+        config.derived_by = " AND ".join(rules)
+        config.feature_variables = config.feature_variables
+        out = Cohort(sub.static, sub.dynamic, events=sub.events, config=config)
+        out.save(path)
+        return out
+
+    def feature_catalog(self) -> list[dict[str, Any]]:
+        """Describe every feature-table column for building filters: kind, range, categories."""
+        feats = self.features()
+        catalog: list[dict[str, Any]] = []
+        for name, dtype in feats.schema.items():
+            if name == ENCOUNTER_ID:
+                continue
+            col = feats.get_column(name)
+            source = (
+                "aggregate"
+                if "__" in name
+                else (
+                    "stay" if name in ("los_hours", "n_observations", "n_variables") else "static"
+                )
+            )
+            entry: dict[str, Any] = {"name": name, "source": source, "label": name}
+            if "__" in name:
+                var, agg = name.rsplit("__", 1)
+                entry["label"] = f"{self.config.label(var)} ({agg})"
+            if dtype.is_numeric():
+                entry.update(kind="numeric", min=_f(col.min()), max=_f(col.max()))
+            elif dtype == pl.Boolean:
+                entry.update(kind="boolean")
+            elif dtype.is_temporal():
+                entry.update(kind="temporal")
+            else:
+                cats = col.drop_nulls().unique().sort().to_list()
+                entry.update(kind="categorical", categories=[str(c) for c in cats[:50]])
+            catalog.append(entry)
+        return catalog
+
+    def move_to_static(self, variables: Iterable[str]) -> Cohort:
+        """Turn per-encounter-constant variables into static columns (first value per encounter)."""
+        names = [v for v in variables]
+        if not names:
+            return self
+        firsts = collect(
+            self.sorted_dynamic()
+            .filter(pl.col(VARIABLE).is_in(names))
+            .group_by(ENCOUNTER_ID, VARIABLE)
+            .agg(pl.col(VALUE).first())
+        ).pivot(on=VARIABLE, index=ENCOUNTER_ID, values=VALUE)
+        static = self.static.drop([c for c in names if c in self.static.columns]).join(
+            firsts, on=ENCOUNTER_ID, how="left"
+        )
+        config = self.config.model_copy(deep=True)
+        config.processing.drop_variables = [
+            v for v in config.processing.drop_variables if v not in names
+        ]
+        config.plots = [v for v in config.plots if v not in names]
+        return Cohort(
+            static,
+            self.dynamic.filter(~pl.col(VARIABLE).is_in(names)),
+            events=self.events,
+            config=config,
+            root=self.root,
+            _full=self._full,
+        )
+
     # ----------------------------------------------------------------- outputs
     def summary(self) -> CohortSummary:
         feats = self.features()
@@ -696,3 +779,7 @@ class Cohort:
         self.root = target
         self._features = None
         return target
+
+
+def _f(x: Any) -> float | None:
+    return None if x is None else float(x)
