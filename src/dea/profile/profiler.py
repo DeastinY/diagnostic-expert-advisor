@@ -267,6 +267,8 @@ def _variable_profiles(
             flags.append("binary")
         if n_unique > 1 and row["_max_unique"] == 1 and (row["_max_obs"] or 0) > 1:
             flags.append("constant_per_encounter")
+        elif (row["_max_obs"] or 0) == 1 and row["n_encounters"] > 1:
+            flags.append("single_observation")
         if row["_integer"]:
             flags.append("integer")
         if coverage < 0.1:

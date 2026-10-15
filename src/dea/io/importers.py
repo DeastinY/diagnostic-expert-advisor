@@ -98,7 +98,7 @@ class Detection:
     """Best guess at how a source is laid out. Every field can be overridden on import."""
 
     source: Path
-    format: Literal["dea", "csv_tree", "table", "unknown"]
+    format: Literal["dea", "csv_tree", "mimic", "table", "unknown"]
     table_kind: Literal["long", "wide"] | None = None
     encounter_col: str | None = None
     time_col: str | None = None
@@ -219,8 +219,12 @@ def detect(path: Path | str) -> Detection:
     from dea.io.storage import is_cohort_dir  # local import to avoid a cycle at module load
 
     if p.is_dir():
+        from dea.io.mimic import is_mimic_dir
+
         if is_cohort_dir(p):
             return Detection(source=p, format="dea")
+        if is_mimic_dir(p):
+            return Detection(source=p, format="mimic", time_unit="datetime")
         has_tree = (p / "static.csv").exists() or any(
             (d / "dynamic.csv").exists() for d in p.iterdir() if d.is_dir()
         )
@@ -568,6 +572,10 @@ def import_path(
     if det.format == "csv_tree":
         unit = det.time_unit if det.time_unit != "auto" else "m"
         return import_csv_tree(p, time_unit=unit, name=cohort_name)
+    if det.format == "mimic":
+        from dea.io.mimic import import_mimic
+
+        return import_mimic(p, name=cohort_name)
     if det.format != "table":
         raise ValueError(f"cannot import {p}: {'; '.join(det.notes) or 'unknown layout'}")
     lf = scan_table(p)

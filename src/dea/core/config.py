@@ -67,6 +67,10 @@ class CohortConfig(BaseModel):
         default=None,
         description="Variables aggregated in the feature table; default: the 200 most observed",
     )
+    parent: str | None = Field(
+        default=None, description="Path of the cohort this one was derived from"
+    )
+    derived_by: str | None = Field(default=None, description="Rule that selected this sub-cohort")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     dea_version: str = "2"
     source: str = ""

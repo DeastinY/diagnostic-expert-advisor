@@ -10,6 +10,12 @@ from pathlib import Path
 
 
 def _cmd_synth(args: argparse.Namespace) -> int:
+    if args.mimic:
+        from dea.synth import write_mimic_demo
+
+        write_mimic_demo(args.out, n_stays=args.n, seed=args.seed)
+        print(f"wrote {args.n} synthetic ICU stays in MIMIC-IV layout to {args.out}")
+        return 0
     from dea.synth import write_synthetic
 
     write_synthetic(args.out, n_encounters=args.n, seed=args.seed, name=args.name)
@@ -150,6 +156,24 @@ THEME_ARGS = [
 ]
 
 
+def _cmd_suggest(args: argparse.Namespace) -> int:
+    from dea.io import load_cohort
+    from dea.suggest import apply_suggestions, suggest
+
+    cohort = load_cohort(args.cohort)
+    suggestions = suggest(cohort)
+    for s in suggestions:
+        mark = "*" if s.applicable else " "
+        print(f"[{mark}] {s.kind:10} {s.title}\n      {s.detail}")
+    if args.apply:
+        chosen = [
+            s for s in suggestions if s.applicable and (not args.kinds or s.kind in args.kinds)
+        ]
+        apply_suggestions(cohort, chosen).save()
+        print(f"applied {len(chosen)} suggestion(s) and saved {cohort.root}")
+    return 0
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     from dea.io import load_cohort
     from dea.report import write_report
@@ -192,6 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--n", type=int, default=40)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--name")
+    p.add_argument("--mimic", action="store_true", help="write MIMIC-IV-shaped CSV tables instead")
     p.set_defaults(func=_cmd_synth)
 
     p = sub.add_parser("detect", help="guess the layout of a data source")
@@ -233,6 +258,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("cohort")
     p.add_argument("mapping", nargs="+", metavar="OLD=NEW")
     p.set_defaults(func=_cmd_rename)
+
+    p = sub.add_parser(
+        "suggest", help="rule-based suggestions: harmonization, processing, tags, quality"
+    )
+    p.add_argument("cohort")
+    p.add_argument("--apply", action="store_true", help="apply all applicable suggestions and save")
+    p.add_argument(
+        "--kinds",
+        nargs="*",
+        help="with --apply: only these kinds (harmonize static drop processing tag filter plot)",
+    )
+    p.set_defaults(func=_cmd_suggest)
 
     p = sub.add_parser("report", help="write a one-page HTML report of a cohort")
     p.add_argument("cohort")

@@ -221,3 +221,25 @@ def test_rename_variables(tiny: Cohort, tmp_path) -> None:
     back = load_cohort(path)
     assert back.variables == ["Lactate", "heart_rate"]
     assert back.config.variable_map == {"HR": "heart_rate"}
+
+
+def test_derive_and_catalog(tiny: Cohort, tmp_path) -> None:
+    from dea.io import load_cohort
+
+    sub = tiny.derive(tmp_path / "old", "age >= 65", description="elderly")
+    assert sub.encounter_ids == ["b"] and sub.name == "old"
+    back = load_cohort(tmp_path / "old")
+    assert back.config.derived_by == "age >= 65" and back.config.parent == "tiny"
+    assert back.config.filters == tiny.config.filters
+    assert back.get("b").dynamic.height == 2
+    catalog = {c["name"]: c for c in tiny.feature_catalog()}
+    assert catalog["age"]["kind"] == "numeric" and catalog["age"]["min"] == 40
+    assert catalog["sex"] == {
+        "name": "sex",
+        "source": "static",
+        "label": "sex",
+        "kind": "categorical",
+        "categories": ["F", "M"],
+    }
+    assert catalog["HR__max"]["label"] == "HR (max)" and catalog["HR__max"]["source"] == "aggregate"
+    assert catalog["los_hours"]["source"] == "stay"
