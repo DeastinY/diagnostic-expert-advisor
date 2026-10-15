@@ -724,6 +724,94 @@ class Cohort:
             )
         ).sort(groups)
 
+    def coverage_matrix(
+        self, every: str = "4h", max_hours: float = 168.0, variables: Iterable[str] | None = None
+    ) -> pl.DataFrame:
+        """Share of encounters with data per variable and grid cell since admission.
+
+        The denominator per cell is the number of encounters still in the unit at the cell's
+        start, so late cells are not diluted by discharged patients. Columns:
+        ``variable, hours, n, at_risk, fraction``.
+        """
+        step = duration_seconds(every)
+        lf = self.dynamic.filter(pl.col(TIME) <= pl.duration(hours=max_hours))
+        if variables is not None:
+            lf = lf.filter(pl.col(VARIABLE).is_in(list(variables)))
+        cell = ((pl.col(TIME).dt.total_seconds() // step) * step / 3600.0).alias("hours")
+        cells = collect(
+            lf.with_columns(cell)
+            .group_by(VARIABLE, "hours")
+            .agg(pl.col(ENCOUNTER_ID).n_unique().alias("n"))
+        )
+        los = self.features().get_column("los_hours")
+        at_risk = pl.DataFrame(
+            {"hours": sorted(cells.get_column("hours").unique().to_list())}
+        ).with_columns(
+            pl.col("hours")
+            .map_elements(lambda h: int((los >= h).sum()), return_dtype=pl.Int64)
+            .alias("at_risk")
+        )
+        return (
+            cells.join(at_risk, on="hours")
+            .with_columns((pl.col("n") / pl.col("at_risk").clip(1)).round(4).alias("fraction"))
+            .sort(VARIABLE, "hours")
+        )
+
+    def distribution_bins(
+        self, variables: Iterable[str] | None = None, bins: int = 24, sample: int = 300
+    ) -> pl.DataFrame:
+        """Histogram bins per variable from a sample of encounters, trimmed to the 1st-99th pct.
+
+        Columns: ``variable, lo, hi, count``. Small enough to ship to a browser for any cohort.
+        """
+        ids = self.encounter_ids
+        step = max(1, len(ids) // sample)
+        lf = self.dynamic.filter(pl.col(ENCOUNTER_ID).is_in(ids[::step][:sample]))
+        if variables is not None:
+            lf = lf.filter(pl.col(VARIABLE).is_in(list(variables)))
+        values = collect(lf.select(VARIABLE, VALUE))
+        if values.is_empty():
+            return pl.DataFrame(
+                schema={
+                    VARIABLE: pl.String(),
+                    "lo": pl.Float64(),
+                    "hi": pl.Float64(),
+                    "count": pl.UInt32(),
+                }
+            )
+        bounds = (
+            values.group_by(VARIABLE)
+            .agg(
+                pl.col(VALUE).quantile(0.01).alias("_p01"),
+                pl.col(VALUE).quantile(0.99).alias("_p99"),
+            )
+            .with_columns(
+                pl.when(pl.col("_p99") > pl.col("_p01"))
+                .then(pl.col("_p99") - pl.col("_p01"))
+                .otherwise(1.0)
+                .alias("_w")
+            )
+        )
+        binned = (
+            values.join(bounds, on=VARIABLE)
+            .with_columns(
+                ((pl.col(VALUE) - pl.col("_p01")) / pl.col("_w") * bins)
+                .floor()
+                .clip(0, bins - 1)
+                .cast(pl.Int64())
+                .alias("_b")
+            )
+            .group_by(VARIABLE, "_b", "_p01", "_w")
+            .agg(pl.len().alias("count"))
+            .with_columns(
+                (pl.col("_p01") + pl.col("_b") * pl.col("_w") / bins).alias("lo"),
+                (pl.col("_p01") + (pl.col("_b") + 1) * pl.col("_w") / bins).alias("hi"),
+            )
+            .select(VARIABLE, "lo", "hi", "count")
+            .sort(VARIABLE, "lo")
+        )
+        return binned
+
     def to_pandas(self, **kwargs: Any):  # noqa: ANN201 - pandas is optional
         """:meth:`wide` as a pandas DataFrame with a (encounter_id, time) index."""
         return self.wide(**kwargs).to_pandas().set_index([ENCOUNTER_ID, TIME])

@@ -339,6 +339,7 @@ def create_app(
         static_column: str | None = None,
         variable: str | None = None,
         by: str | None = None,
+        dark: bool = False,
     ) -> dict[str, Any]:
         from dea import charts
 
@@ -349,20 +350,15 @@ def create_app(
         out: dict[str, Any] = {}
         if feats.height:
             out["los"] = charts.histogram(
-                feats["los_hours"] / 24, "Length of stay", "days"
+                feats["los_hours"] / 24, "Length of stay", "days", dark=dark
             ).to_dict()
-            count_cols = [c for c in feats.columns if c.endswith("__count")]
-            cov = pl.DataFrame(
-                {
-                    "variable": [c[: -len("__count")] for c in count_cols],
-                    "coverage": [
-                        float((feats[c].fill_null(0) > 0).mean()) * 100 for c in count_cols
-                    ],
-                }
+            heat = charts.coverage_heatmap(
+                cohort.coverage_matrix(every="4h", max_hours=168),
+                cfg.variable_labels,
+                4.0,
+                dark=dark,
             )
-            out["coverage"] = charts.horizontal_bars(
-                cov, "variable", "coverage", "Encounters with data (%)", value_format=".0f"
-            ).to_dict()
+            out["coverage_heatmap"] = heat.to_dict() if heat is not None else None
             if cfg.tags:
                 tags = cohort.tag_matrix()
                 counts = pl.DataFrame(
@@ -372,26 +368,44 @@ def create_app(
                     }
                 )
                 out["tags"] = charts.horizontal_bars(
-                    counts, "tag", "encounters", "Encounters"
+                    counts, "tag", "encounters", "Encounters", dark=dark
                 ).to_dict()
             if static_column and static_column in cohort.static.columns:
                 series = cohort.static[static_column]
                 chart = (
-                    charts.histogram(series, cfg.label(static_column))
+                    charts.histogram(series, cfg.label(static_column), dark=dark)
                     if series.dtype.is_numeric() and series.n_unique() > 12
-                    else charts.category_counts(series, cfg.label(static_column))
+                    else charts.category_counts(series, cfg.label(static_column), dark=dark)
                 )
                 out["static"] = chart.to_dict()
             if variable and f"{variable}__mean" in feats.columns:
                 unit = cfg.variable_units.get(variable, "")
                 if by and by in cohort.static.columns:
-                    out["variable"] = charts.faceted_histogram(
-                        feats, f"{variable}__mean", by, cfg.label(variable)
+                    out["variable"] = charts.group_boxplot(
+                        feats, f"{variable}__mean", by, cfg.label(variable), unit, dark=dark
                     ).to_dict()
                 else:
                     out["variable"] = charts.histogram(
-                        feats[f"{variable}__mean"], cfg.label(variable), unit
+                        feats[f"{variable}__mean"], cfg.label(variable), unit, dark=dark
                     ).to_dict()
+        return out
+
+    @app.get("/api/cohorts/{name}/charts/profile")
+    def charts_profile(name: str, where: Where = None, dark: bool = False) -> dict[str, Any]:
+        from dea import charts
+
+        cohort = _filtered(store.get(name), where)
+        cfg = cohort.config
+        out: dict[str, Any] = {}
+        gallery = charts.distribution_gallery(
+            cohort.distribution_bins(), cfg.variable_labels, cfg.variable_units, dark=dark
+        )
+        out["gallery"] = gallery.to_dict() if gallery is not None else None
+        counts = cohort.variable_counts().rename({"variable": "name"})
+        if counts.height:
+            out["observations"] = charts.horizontal_bars(
+                counts.head(40), "name", "n_observations", "Observations", dark=dark
+            ).to_dict()
         return out
 
     @app.get("/api/cohorts/{name}/charts/trajectory")
@@ -402,6 +416,7 @@ def create_app(
         by: str | None = None,
         max_hours: float = 168,
         where: Where = None,
+        dark: bool = False,
     ) -> dict[str, Any]:
         from dea import charts
 
@@ -417,7 +432,7 @@ def create_app(
         cfg = cohort.config
         return {
             "spec": charts.trajectory(
-                traj, cfg.label(variable), cfg.variable_units.get(variable, ""), by=by
+                traj, cfg.label(variable), cfg.variable_units.get(variable, ""), by=by, dark=dark
             ).to_dict(),
             "rows": traj.height,
         }
@@ -483,6 +498,7 @@ def create_app(
         eid: str,
         variables: Annotated[list[str] | None, Query()] = None,
         every: str | None = None,
+        dark: bool = False,
     ) -> dict[str, Any]:
         from dea import charts
 
@@ -494,7 +510,12 @@ def create_app(
         cfg = cohort.config
         chosen = variables or [v for v in cfg.plots if v in e.variables] or e.variables[:6]
         chart = charts.small_multiples(
-            e, chosen, every or None, labels=cfg.variable_labels, units=cfg.variable_units
+            e,
+            chosen,
+            every or None,
+            labels=cfg.variable_labels,
+            units=cfg.variable_units,
+            dark=dark,
         )
         return {"spec": chart.to_dict() if chart is not None else None}
 
