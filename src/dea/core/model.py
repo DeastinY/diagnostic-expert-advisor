@@ -2,15 +2,18 @@
 
 Data model
 ----------
-Dynamic observations are stored in **long format** with four columns::
+Numeric observations are stored in **long format** with four columns::
 
     encounter_id (str) | time (Duration since admission) | variable (str) | value (f64)
 
+Non-numeric observations (ventilation mode, drug names, free-text flags) use the same
+shape with a string ``value`` and live in a separate ``events`` table.
+
 Long format is what makes heterogeneous clinical data cheap to handle: encounters may
 record different variables at different rates, nothing is padded, and the whole cohort
-can be scanned lazily from Parquet. Wide frames (one column per variable) are produced on
-demand by :meth:`Encounter.wide` and :meth:`Cohort.wide`, optionally resampled onto a
-regular grid.
+is scanned lazily from Parquet with Polars' streaming engine. Wide frames (one column per
+variable) are produced on demand by :meth:`Encounter.wide` and :meth:`Cohort.wide`,
+optionally resampled onto a regular grid.
 
 Static, per-encounter information lives in one table keyed by ``encounter_id``.
 """
@@ -42,28 +45,36 @@ LONG_SCHEMA: dict[str, pl.DataType] = {
     VARIABLE: pl.String(),
     VALUE: pl.Float64(),
 }
+EVENT_SCHEMA: dict[str, pl.DataType] = {**LONG_SCHEMA, VALUE: pl.String()}
 
 FEATURE_AGGS = ("min", "max", "mean", "first", "last", "count")
+FEATURE_VARIABLE_LIMIT = 200
 
 
 class FilterError(ValueError):
     """Raised when a filter or tag expression cannot be evaluated."""
 
 
-def ensure_long_schema(frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
-    """Validate and normalize a long frame to :data:`LONG_SCHEMA`."""
+def collect(lf: pl.LazyFrame) -> pl.DataFrame:
+    """Collect with the streaming engine so large cohorts never need to fit in memory."""
+    return lf.collect(engine="streaming")
+
+
+def ensure_schema(
+    frame: pl.DataFrame | pl.LazyFrame, schema: dict[str, pl.DataType]
+) -> pl.LazyFrame:
+    """Validate and normalize a long frame to ``schema``."""
     lf = frame.lazy()
-    schema = lf.collect_schema()
-    missing = [c for c in LONG_SCHEMA if c not in schema]
+    have = lf.collect_schema()
+    missing = [c for c in schema if c not in have]
     if missing:
-        raise ValueError(f"long frame is missing columns {missing}; expected {list(LONG_SCHEMA)}")
-    casts = []
-    for name, dtype in LONG_SCHEMA.items():
-        if schema[name] != dtype:
-            casts.append(pl.col(name).cast(dtype))
-    if casts:
-        lf = lf.with_columns(casts)
-    return lf.select(list(LONG_SCHEMA))
+        raise ValueError(f"long frame is missing columns {missing}; expected {list(schema)}")
+    casts = [pl.col(n).cast(t) for n, t in schema.items() if have[n] != t]
+    return (lf.with_columns(casts) if casts else lf).select(list(schema))
+
+
+def ensure_long_schema(frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
+    return ensure_schema(frame, LONG_SCHEMA)
 
 
 def _grid_bucket(every_seconds: int) -> pl.Expr:
@@ -99,6 +110,7 @@ def long_to_wide(
     variable, sorted by encounter and time. With ``resample_every`` set, observations are
     aggregated per grid cell and, when ``complete_grid`` is true, empty cells between the
     first and last observation of each encounter are materialized so fills can act on them.
+    Fills are applied per encounter.
     """
     processing = processing or ProcessingConfig()
     lf = long.lazy()
@@ -110,69 +122,71 @@ def long_to_wide(
         lf = lf.filter(pl.col(VARIABLE).is_in(list(variables)))
     if processing.drop_variables:
         lf = lf.filter(~pl.col(VARIABLE).is_in(processing.drop_variables))
-
-    if processing.resample_every:
-        every = duration_seconds(processing.resample_every)
+    every = duration_seconds(processing.resample_every) if processing.resample_every else None
+    if every:
         lf = lf.with_columns(_grid_bucket(every))
-        agg = getattr(pl.col(VALUE), processing.aggregate)()
-        lf = lf.group_by([*keys, VARIABLE]).agg(agg.alias(VALUE))
-    else:
-        agg_fn = getattr(pl.col(VALUE), processing.aggregate)()
-        lf = lf.group_by([*keys, VARIABLE]).agg(agg_fn.alias(VALUE))
-
-    df = lf.collect()
+    agg = getattr(pl.col(VALUE), processing.aggregate)()
+    df = collect(lf.group_by([*keys, VARIABLE]).agg(agg.alias(VALUE)))
     if df.is_empty():
-        return pl.DataFrame(
-            schema={**({ENCOUNTER_ID: pl.String()} if has_id else {}), TIME: LONG_SCHEMA[TIME]}
-        )
+        empty = {ENCOUNTER_ID: pl.String()} if has_id else {}
+        return pl.DataFrame(schema={**empty, TIME: LONG_SCHEMA[TIME]})
 
     wide = df.pivot(on=VARIABLE, index=keys, values=VALUE, aggregate_function="first")
 
-    if processing.resample_every and complete_grid:
-        every = duration_seconds(processing.resample_every)
-        bounds = (
-            df.group_by(keys[:-1] or None).agg(
-                pl.col(TIME).min().alias("_lo"), pl.col(TIME).max().alias("_hi")
+    if every and complete_grid:
+        lo, hi = pl.col(TIME).min().alias("_lo"), pl.col(TIME).max().alias("_hi")
+        bounds = df.group_by(ENCOUNTER_ID).agg(lo, hi) if has_id else df.select(lo, hi)
+        grid = (
+            bounds.with_columns(
+                pl.int_ranges(
+                    pl.col("_lo").dt.total_seconds(),
+                    pl.col("_hi").dt.total_seconds() + every,
+                    every,
+                ).alias("_secs")
             )
-            if has_id
-            else df.select(pl.col(TIME).min().alias("_lo"), pl.col(TIME).max().alias("_hi"))
-        )
-        bounds = bounds.with_columns(
-            pl.int_ranges(
-                pl.col("_lo").dt.total_seconds(),
-                pl.col("_hi").dt.total_seconds() + every,
-                every,
-            ).alias("_secs")
-        ).explode("_secs")
-        grid = bounds.select(
-            *([pl.col(ENCOUNTER_ID)] if has_id else []),
-            pl.duration(seconds=pl.col("_secs")).cast(LONG_SCHEMA[TIME]).alias(TIME),
+            .explode("_secs")
+            .select(
+                *([pl.col(ENCOUNTER_ID)] if has_id else []),
+                pl.duration(seconds=pl.col("_secs")).cast(LONG_SCHEMA[TIME]).alias(TIME),
+            )
         )
         wide = grid.join(wide, on=keys, how="left")
 
     wide = wide.sort(keys)
-    wide = _apply_fill(wide, processing)
+    if has_id:
+        parts = [
+            _apply_fill(part, processing)
+            for _, part in wide.group_by(ENCOUNTER_ID, maintain_order=True)
+        ]
+        wide = pl.concat(parts) if parts else wide
+    else:
+        wide = _apply_fill(wide, processing)
     var_cols = sorted(c for c in wide.columns if c not in keys)
     return wide.select([*keys, *var_cols])
 
 
 @dataclass
 class Encounter:
-    """One hospital stay: static facts plus long-format observations."""
+    """One hospital stay: static facts, numeric observations and string events."""
 
     id: str
     static: dict[str, Any]
     dynamic: pl.DataFrame
+    events: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(schema=EVENT_SCHEMA))
     config: CohortConfig | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.id = str(self.id)
-        lf = ensure_long_schema(self.dynamic)
-        self.dynamic = lf.drop(ENCOUNTER_ID).collect()
+        self.dynamic = ensure_schema(self.dynamic, LONG_SCHEMA).drop(ENCOUNTER_ID).collect()
+        self.events = ensure_schema(self.events, EVENT_SCHEMA).drop(ENCOUNTER_ID).collect()
 
     @property
     def variables(self) -> list[str]:
         return sorted(self.dynamic.get_column(VARIABLE).unique().to_list())
+
+    @property
+    def event_variables(self) -> list[str]:
+        return sorted(self.events.get_column(VARIABLE).unique().to_list())
 
     @property
     def n_observations(self) -> int:
@@ -180,9 +194,12 @@ class Encounter:
 
     @property
     def length_of_stay(self) -> timedelta:
-        if self.dynamic.is_empty():
-            return timedelta(0)
-        return self.dynamic.get_column(TIME).max()  # type: ignore[return-value]
+        times = [
+            t
+            for t in (self.dynamic.get_column(TIME).max(), self.events.get_column(TIME).max())
+            if t
+        ]
+        return max(times) if times else timedelta(0)  # type: ignore[return-value]
 
     @property
     def los_hours(self) -> float:
@@ -204,18 +221,11 @@ class Encounter:
         ``every`` and ``fill`` override the cohort's processing config for this call.
         """
         base = processing or (self.config.processing if self.config else ProcessingConfig())
-        updates: dict[str, Any] = {}
-        if every is not None:
-            updates["resample_every"] = every
-        if fill is not None:
-            updates["fill"] = fill
-        proc = base.model_copy(update=updates) if updates else base
-        return long_to_wide(self.dynamic, proc, variables)
+        return long_to_wide(self.dynamic, _override(base, every, fill), variables)
 
     def to_pandas(self, **kwargs: Any):  # noqa: ANN201 - pandas is optional
         """Wide frame as a pandas DataFrame indexed by time (requires ``dea[pandas]``)."""
-        wide = self.wide(**kwargs)
-        return wide.to_pandas().set_index(TIME)
+        return self.wide(**kwargs).to_pandas().set_index(TIME)
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -225,6 +235,15 @@ class Encounter:
             "n_variables": len(self.variables),
             **self.static,
         }
+
+
+def _override(base: ProcessingConfig, every: str | None, fill: str | None) -> ProcessingConfig:
+    updates: dict[str, Any] = {}
+    if every is not None:
+        updates["resample_every"] = every or None
+    if fill is not None:
+        updates["fill"] = fill
+    return base.model_copy(update=updates) if updates else base
 
 
 @dataclass(frozen=True)
@@ -243,20 +262,24 @@ class CohortSummary:
 
 
 class Cohort:
-    """A set of encounters with shared static table, lazy dynamic data and a config.
+    """A set of encounters: static table, lazy observations, lazy events and a config.
 
     Construct via :func:`dea.io.load_cohort`, the importers in :mod:`dea.io`, or directly
-    from a static frame and a long dynamic frame.
+    from a static frame and long dynamic (and optionally events) frames.
     """
+
+    FEATURES_CACHE = "_features.parquet"
 
     def __init__(
         self,
         static: pl.DataFrame,
         dynamic: pl.DataFrame | pl.LazyFrame,
+        events: pl.DataFrame | pl.LazyFrame | None = None,
         config: CohortConfig | None = None,
         root: Path | None = None,
         name: str | None = None,
         _features: pl.DataFrame | None = None,
+        _full: bool = True,
     ) -> None:
         if ENCOUNTER_ID not in static.columns:
             raise ValueError(f"static table needs an '{ENCOUNTER_ID}' column")
@@ -266,12 +289,16 @@ class Cohort:
         self.static: pl.DataFrame = static.select(
             ENCOUNTER_ID, *[c for c in static.columns if c != ENCOUNTER_ID]
         )
-        self.dynamic: pl.LazyFrame = ensure_long_schema(dynamic)
+        self.dynamic: pl.LazyFrame = ensure_schema(dynamic, LONG_SCHEMA)
+        self.events: pl.LazyFrame = ensure_schema(
+            events if events is not None else pl.LazyFrame(schema=EVENT_SCHEMA), EVENT_SCHEMA
+        )
         self.config: CohortConfig = config or CohortConfig(name=name or "cohort")
         if name:
             self.config.name = name
         self.root: Path | None = Path(root) if root else None
         self._features = _features
+        self._full = _full  # False for subsets, which must not write the feature cache
 
     # ------------------------------------------------------------------ basics
     @property
@@ -305,57 +332,101 @@ class Cohort:
             raise KeyError(f"unknown encounter {eid!r}")
         static = rows.row(0, named=True)
         static.pop(ENCOUNTER_ID, None)
-        dynamic = self.dynamic.filter(pl.col(ENCOUNTER_ID) == eid).collect()
-        return Encounter(id=eid, static=static, dynamic=dynamic, config=self.config)
+        match = pl.col(ENCOUNTER_ID) == eid
+        return Encounter(
+            id=eid,
+            static=static,
+            dynamic=collect(self.dynamic.filter(match)),
+            events=collect(self.events.filter(match)),
+            config=self.config,
+        )
 
     def encounters(self, ids: Iterable[str] | None = None) -> list[Encounter]:
-        """Materialize encounters (all by default) in a single pass over the data."""
+        """Materialize encounters (all by default) in one pass over the data."""
         wanted = [str(i) for i in ids] if ids is not None else self.encounter_ids
-        wanted_set = set(wanted)
-        frame = self.dynamic.filter(pl.col(ENCOUNTER_ID).is_in(wanted)).collect()
-        parts = {eid: part for (eid,), part in frame.group_by(ENCOUNTER_ID)}
         static_rows = {
             row[ENCOUNTER_ID]: {k: v for k, v in row.items() if k != ENCOUNTER_ID}
             for row in self.static.filter(pl.col(ENCOUNTER_ID).is_in(wanted)).iter_rows(named=True)
         }
-        out = []
-        for eid in wanted:
-            if eid not in wanted_set or eid not in static_rows:
-                raise KeyError(f"unknown encounter {eid!r}")
-            dyn = parts.get(eid)
-            if dyn is None:
-                dyn = pl.DataFrame(schema=LONG_SCHEMA)
-            out.append(Encounter(id=eid, static=static_rows[eid], dynamic=dyn, config=self.config))
-        return out
+        unknown = [e for e in wanted if e not in static_rows]
+        if unknown:
+            raise KeyError(f"unknown encounter(s) {unknown[:5]!r}")
+        match = pl.col(ENCOUNTER_ID).is_in(wanted)
+        dyn = {k[0]: v for k, v in collect(self.dynamic.filter(match)).group_by(ENCOUNTER_ID)}
+        evt = {k[0]: v for k, v in collect(self.events.filter(match)).group_by(ENCOUNTER_ID)}
+        return [
+            Encounter(
+                id=eid,
+                static=static_rows[eid],
+                dynamic=dyn.get(eid, pl.DataFrame(schema=LONG_SCHEMA)),
+                events=evt.get(eid, pl.DataFrame(schema=EVENT_SCHEMA)),
+                config=self.config,
+            )
+            for eid in wanted
+        ]
+
+    def variable_counts(self) -> pl.DataFrame:
+        """``variable`` and ``n_observations`` for every numeric variable, most frequent first."""
+        counts = self.dynamic.group_by(VARIABLE).agg(pl.len().alias("n_observations"))
+        return collect(counts).sort(["n_observations", VARIABLE], descending=[True, False])
 
     @property
     def variables(self) -> list[str]:
-        return sorted(
-            self.dynamic.select(pl.col(VARIABLE).unique()).collect().get_column(VARIABLE).to_list()
-        )
+        return sorted(self.variable_counts().get_column(VARIABLE).to_list())
+
+    @property
+    def event_variables(self) -> list[str]:
+        return sorted(collect(self.events.select(pl.col(VARIABLE).unique())).get_column(VARIABLE))
 
     @property
     def static_columns(self) -> list[str]:
         return [c for c in self.static.columns if c != ENCOUNTER_ID]
 
     # ---------------------------------------------------------------- features
+    def feature_variables(self) -> list[str]:
+        """Variables that get per-encounter aggregates in :meth:`features`.
+
+        ``config.feature_variables`` when set, otherwise the most observed variables up to
+        :data:`FEATURE_VARIABLE_LIMIT`, so cohorts with thousands of item codes stay tractable.
+        """
+        if self.config.feature_variables:
+            return list(self.config.feature_variables)
+        return self.variable_counts().head(FEATURE_VARIABLE_LIMIT).get_column(VARIABLE).to_list()
+
+    def _features_cache(self) -> Path | None:
+        return self.root / "derived" / self.FEATURES_CACHE if self.root else None
+
     def features(self, refresh: bool = False) -> pl.DataFrame:
         """One row per encounter: static columns, stay statistics and per-variable aggregates.
 
         Variable aggregates are named ``<variable>__<agg>`` for ``agg`` in
         ``min, max, mean, first, last, count``. Filters and tags are evaluated on this table,
-        and it doubles as a ready-made encounter-level feature matrix for ML.
+        and it doubles as a ready-made encounter-level feature matrix for ML. For stored
+        cohorts the table is cached under ``derived/`` and reused until the cohort is saved.
         """
         if self._features is not None and not refresh:
             return self._features
+        cache = self._features_cache()
+        if cache and cache.exists() and not refresh and self._full:
+            self._features = pl.read_parquet(cache)
+            return self._features
+        self._features = self._compute_features()
+        if cache and self._full:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            self._features.write_parquet(cache)
+        return self._features
+
+    def _compute_features(self) -> pl.DataFrame:
         stay = self.dynamic.group_by(ENCOUNTER_ID).agg(
             (pl.col(TIME).max().dt.total_seconds() / 3600.0).alias("los_hours"),
             pl.len().alias("n_observations"),
             pl.col(VARIABLE).n_unique().alias("n_variables"),
         )
-        per_var = (
-            self.dynamic.sort(TIME)
-            .group_by(ENCOUNTER_ID, VARIABLE)
+        selected = self.feature_variables()
+        per_var = collect(
+            self.dynamic.filter(pl.col(VARIABLE).is_in(selected))
+            .sort(ENCOUNTER_ID, VARIABLE, TIME)
+            .group_by(ENCOUNTER_ID, VARIABLE, maintain_order=True)
             .agg(
                 pl.col(VALUE).min().alias("min"),
                 pl.col(VALUE).max().alias("max"),
@@ -364,19 +435,19 @@ class Cohort:
                 pl.col(VALUE).last().alias("last"),
                 pl.col(VALUE).count().cast(pl.Float64()).alias("count"),
             )
-            .collect()
         )
         if per_var.is_empty():
-            wide_vars = pl.DataFrame({ENCOUNTER_ID: []}, schema={ENCOUNTER_ID: pl.String()})
+            wide_vars = pl.DataFrame(schema={ENCOUNTER_ID: pl.String()})
         else:
-            melted = per_var.unpivot(
-                index=[ENCOUNTER_ID, VARIABLE], on=list(FEATURE_AGGS), variable_name="agg"
-            ).with_columns((pl.col(VARIABLE) + pl.lit("__") + pl.col("agg")).alias("feature"))
-            wide_vars = melted.pivot(
-                on="feature", index=ENCOUNTER_ID, values=VALUE, aggregate_function="first"
+            wide_vars = (
+                per_var.unpivot(
+                    index=[ENCOUNTER_ID, VARIABLE], on=list(FEATURE_AGGS), variable_name="agg"
+                )
+                .with_columns((pl.col(VARIABLE) + pl.lit("__") + pl.col("agg")).alias("feature"))
+                .pivot(on="feature", index=ENCOUNTER_ID, values=VALUE, aggregate_function="first")
             )
-        feats = (
-            self.static.join(stay.collect(), on=ENCOUNTER_ID, how="left")
+        return (
+            self.static.join(collect(stay), on=ENCOUNTER_ID, how="left")
             .join(wide_vars, on=ENCOUNTER_ID, how="left")
             .with_columns(
                 pl.col("los_hours").fill_null(0.0),
@@ -385,8 +456,6 @@ class Cohort:
             )
             .sort(ENCOUNTER_ID)
         )
-        self._features = feats
-        return feats
 
     def evaluate(self, where: str | pl.Expr) -> pl.Series:
         """Evaluate a rule expression against :meth:`features`; returns a boolean series."""
@@ -402,10 +471,8 @@ class Cohort:
 
     def tag_matrix(self) -> pl.DataFrame:
         """``encounter_id`` plus one boolean column per configured tag."""
-        feats = self.features()
-        cols = [feats.get_column(ENCOUNTER_ID)]
-        for rule in self.config.tags:
-            cols.append(self.evaluate(rule.where).alias(rule.label))
+        cols = [self.features().get_column(ENCOUNTER_ID)]
+        cols += [self.evaluate(rule.where).alias(rule.label) for rule in self.config.tags]
         return pl.DataFrame(cols)
 
     def filter(self, where: str | pl.Expr | Iterable[str | pl.Expr]) -> Cohort:
@@ -417,8 +484,7 @@ class Cohort:
             mask = m if mask is None else (mask & m)
         if mask is None:
             return self
-        ids = self.features().filter(mask).get_column(ENCOUNTER_ID).to_list()
-        return self.select(ids)
+        return self.select(self.features().filter(mask).get_column(ENCOUNTER_ID).to_list())
 
     def filter_by_labels(self, labels: Iterable[str]) -> Cohort:
         """Apply configured filters by label."""
@@ -433,25 +499,27 @@ class Cohort:
     def select(self, ids: Iterable[str]) -> Cohort:
         """New cohort containing only the given encounters (order of the static table kept)."""
         wanted = [str(i) for i in ids]
-        static = self.static.filter(pl.col(ENCOUNTER_ID).is_in(wanted))
-        dynamic = self.dynamic.filter(pl.col(ENCOUNTER_ID).is_in(wanted))
-        feats = (
-            self._features.filter(pl.col(ENCOUNTER_ID).is_in(wanted))
-            if self._features is not None
-            else None
+        match = pl.col(ENCOUNTER_ID).is_in(wanted)
+        feats = self._features.filter(match) if self._features is not None else None
+        return Cohort(
+            self.static.filter(match),
+            self.dynamic.filter(match),
+            events=self.events.filter(match),
+            config=self.config,
+            root=self.root,
+            _features=feats,
+            _full=False,
         )
-        return Cohort(static, dynamic, config=self.config, root=self.root, _features=feats)
 
     # ----------------------------------------------------------------- outputs
     def summary(self) -> CohortSummary:
         feats = self.features()
         los = feats.get_column("los_hours")
-        n_obs = int(feats.get_column("n_observations").sum()) if feats.height else 0
         return CohortSummary(
             name=self.name,
             n_encounters=len(self),
             n_variables=len(self.variables),
-            n_observations=n_obs,
+            n_observations=int(feats.get_column("n_observations").sum()) if feats.height else 0,
             los_hours_median=float(los.median() or 0.0),
             los_hours_mean=float(los.mean() or 0.0),
             los_hours_min=float(los.min() or 0.0),
@@ -466,22 +534,45 @@ class Cohort:
         with_static: bool = False,
         processing: ProcessingConfig | None = None,
     ) -> pl.DataFrame:
-        """All encounters stacked: ``encounter_id``, ``time`` and one column per variable.
+        """All encounters stacked in memory: ``encounter_id``, ``time``, one column per variable.
 
-        This is the frame to hand to a model. With ``with_static`` the static columns are
-        repeated on every row.
+        This is the frame to hand to a model. For cohorts that do not fit in memory use
+        :meth:`export_wide`, which writes the same frame bucket by bucket.
         """
-        base = processing or self.config.processing
-        updates: dict[str, Any] = {}
-        if every is not None:
-            updates["resample_every"] = every
-        if fill is not None:
-            updates["fill"] = fill
-        proc = base.model_copy(update=updates) if updates else base
+        proc = _override(processing or self.config.processing, every, fill)
         wide = long_to_wide(self.dynamic, proc, variables)
-        if with_static:
-            wide = wide.join(self.static, on=ENCOUNTER_ID, how="left")
-        return wide
+        return wide.join(self.static, on=ENCOUNTER_ID, how="left") if with_static else wide
+
+    def export_wide(
+        self,
+        path: Path | str,
+        every: str | None = None,
+        fill: str | None = None,
+        variables: Iterable[str] | None = None,
+        with_static: bool = False,
+        processing: ProcessingConfig | None = None,
+    ) -> Path:
+        """Write :meth:`wide` as a Parquet dataset, one file per storage bucket.
+
+        Memory use is bounded by the largest bucket (about 500 encounters), so this works
+        for cohorts far larger than RAM. Read it back with ``pl.scan_parquet(path / "*.parquet")``.
+        """
+        out = Path(path)
+        out.mkdir(parents=True, exist_ok=True)
+        for old in out.glob("part-*.parquet"):
+            old.unlink()
+        proc = _override(processing or self.config.processing, every, fill)
+        files = sorted((self.root / "dynamic").rglob("*.parquet")) if self.root else []
+        sources = [pl.scan_parquet(f) for f in files] or [self.dynamic]
+        ids = set(self.encounter_ids)
+        for i, src in enumerate(sources):
+            part = long_to_wide(src.filter(pl.col(ENCOUNTER_ID).is_in(list(ids))), proc, variables)
+            if part.is_empty():
+                continue
+            if with_static:
+                part = part.join(self.static, on=ENCOUNTER_ID, how="left")
+            part.write_parquet(out / f"part-{i:04d}.parquet")
+        return out
 
     def to_pandas(self, **kwargs: Any):  # noqa: ANN201 - pandas is optional
         """:meth:`wide` as a pandas DataFrame with a (encounter_id, time) index."""
@@ -506,8 +597,7 @@ class Cohort:
 
         backend = backend or SerialBackend()
         encounters = self.encounters(ids)
-        results = backend.map(fn, encounters)
-        frame = collect_results([e.id for e in encounters], results)
+        frame = collect_results([e.id for e in encounters], backend.map(fn, encounters))
         if name and self.root is not None:
             out = self.root / "derived"
             out.mkdir(parents=True, exist_ok=True)
@@ -523,7 +613,9 @@ class Cohort:
     def list_derived(self) -> list[str]:
         if self.root is None or not (self.root / "derived").exists():
             return []
-        return sorted(p.stem for p in (self.root / "derived").glob("*.parquet"))
+        return sorted(
+            p.stem for p in (self.root / "derived").glob("*.parquet") if not p.name.startswith("_")
+        )
 
     # ----------------------------------------------------------------- storage
     def save(self, path: Path | None = None) -> Path:
@@ -535,4 +627,5 @@ class Cohort:
             raise ValueError("no path given and cohort has no root")
         save_cohort(self, target)
         self.root = target
+        self._features = None
         return target
