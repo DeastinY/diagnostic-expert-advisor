@@ -207,9 +207,22 @@ if rec is not None:
         st.caption("Storage: " + note)
     for w in rec.warnings:
         st.warning(w)
+    renames = rec.variable_map(full.variables)
+    do_rename = False
+    if renames:
+        do_rename = st.checkbox(
+            f"Also rename {len(renames)} variable(s) to canonical names (rewrites the cohort)",
+            value=False,
+            help=", ".join(f"{k} → {v}" for k, v in list(renames.items())[:12]),
+        )
     if st.button("Apply to cohort.yaml"):
         new_cfg = rec.apply_to(cfg, full.variables)
-        new_cfg.save(full.root / "cohort.yaml")
+        if do_rename:
+            full.config = new_cfg
+            with st.spinner("Renaming and rewriting…"):
+                full.rename_variables(renames).save()
+        else:
+            new_cfg.save(full.root / "cohort.yaml")
         state.invalidate()
         st.success("Applied. Charts, exports and filters now use the recommended settings.")
         st.rerun()

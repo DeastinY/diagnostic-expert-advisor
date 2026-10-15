@@ -118,8 +118,23 @@ def _cmd_advise(args: argparse.Namespace) -> int:
     print(rec.model_dump_json(indent=2))
     if args.apply:
         cohort.config = rec.apply_to(cohort.config, cohort.variables)
-        cohort.config.save(cohort.root / "cohort.yaml")
+        if args.rename:
+            cohort = cohort.rename_variables(rec.variable_map(cohort.variables))
+            cohort.save()
+            print(f"renamed {len(cohort.config.variable_map)} variable(s) and saved {cohort.root}")
+        else:
+            cohort.config.save(cohort.root / "cohort.yaml")
         print(f"applied recommendation to {cohort.root / 'cohort.yaml'}")
+    return 0
+
+
+def _cmd_rename(args: argparse.Namespace) -> int:
+    from dea.io import load_cohort
+
+    mapping = dict(pair.split("=", 1) for pair in args.mapping)
+    cohort = load_cohort(args.cohort).rename_variables(mapping)
+    cohort.save()
+    print(f"renamed {len(mapping)} variable(s); variables now: {', '.join(cohort.variables)}")
     return 0
 
 
@@ -133,6 +148,15 @@ THEME_ARGS = [
     "--theme.textColor",
     "#0b0b0b",
 ]
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    from dea.io import load_cohort
+    from dea.report import write_report
+
+    out = write_report(load_cohort(args.cohort), args.out)
+    print(f"wrote {out}")
+    return 0
 
 
 def _cmd_ui(args: argparse.Namespace) -> int:
@@ -202,7 +226,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--base-url")
     p.add_argument("--show-payload", action="store_true", help="print what would be sent and exit")
     p.add_argument("--apply", action="store_true", help="write the recommendation into cohort.yaml")
+    p.add_argument("--rename", action="store_true", help="with --apply: also rename variables")
     p.set_defaults(func=_cmd_advise)
+
+    p = sub.add_parser("rename", help="rename variables, e.g. dea rename data/c HF=heart_rate")
+    p.add_argument("cohort")
+    p.add_argument("mapping", nargs="+", metavar="OLD=NEW")
+    p.set_defaults(func=_cmd_rename)
+
+    p = sub.add_parser("report", help="write a one-page HTML report of a cohort")
+    p.add_argument("cohort")
+    p.add_argument("out")
+    p.set_defaults(func=_cmd_report)
 
     p = sub.add_parser("ui", help="start the Streamlit app")
     p.add_argument("--data-dir")

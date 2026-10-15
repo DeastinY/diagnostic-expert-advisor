@@ -18,6 +18,7 @@ REC = {
         {
             "variable": "HR",
             "label": "Heart rate",
+            "canonical_name": "heart_rate",
             "role": "vital_sign",
             "unit_guess": "1/min",
             "imputation": "interpolate",
@@ -26,6 +27,7 @@ REC = {
         {
             "variable": "Bed_Number",
             "label": "Bed",
+            "canonical_name": "",
             "role": "identifier",
             "unit_guess": "",
             "imputation": "drop",
@@ -34,6 +36,7 @@ REC = {
         {
             "variable": "Ghost",
             "label": "Ghost",
+            "canonical_name": "ghost",
             "role": "other",
             "unit_guess": "",
             "imputation": "zero",
@@ -148,3 +151,9 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     s = AdvisorSettings.from_env()
     assert s.configured and s.model == "llama3" and "localhost" in s.describe()
     assert AdvisorSettings.from_env(model="other").model == "other"
+
+
+def test_variable_map(cohort: Cohort) -> None:
+    rec = Recommendation.model_validate(REC)
+    assert rec.variable_map() == {"HR": "heart_rate", "Ghost": "ghost"}
+    assert rec.variable_map(cohort.variables) == {"HR": "heart_rate"}

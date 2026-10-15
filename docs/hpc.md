@@ -27,7 +27,7 @@ process and SLURM backends (they pickle it). Scripts using `LocalBackend` need t
 |---|---|---|
 | `SerialBackend` | this process | - |
 | `LocalBackend(max_workers)` | local process pool | - |
-| `SlurmBackend(folder, partition, account, mem_gb, cpus_per_task, timeout_min, ...)` | one SLURM array job via [submitit](https://github.com/facebookincubator/submitit) | `dea[slurm]` |
+| `SlurmBackend(folder, partition, account, mem_gb, cpus_per_task, timeout_min, chunk_size=200, ...)` | one SLURM array job via [submitit](https://github.com/facebookincubator/submitit); `chunk_size` encounters per array task | `dea[slurm]` |
 
 The SLURM backend submits from the machine where DEA runs (it calls `sbatch`), so run DEA
 on a login node or wherever `sbatch` works, with the cohort directory on a filesystem the

@@ -37,8 +37,9 @@ Recommend how to process and store the cohort for exploration and machine learni
 - a default gap-filling strategy and per-variable deviations (labs usually forward-fill,
   continuous vitals may interpolate, medications and binary flags should be zero- or forward-filled,
   identifiers/constants should be dropped),
-- a short English label, role and likely unit for each variable (names may be German or
-  abbreviated),
+- a short English label, role, likely unit and a canonical snake_case machine name for each
+  variable (source names may be German, abbreviated or local item codes; map synonyms to
+  the same canonical name),
 - a handful of clinically meaningful encounter filters expressed over the feature table
   (columns are "<variable>__min|max|mean|first|last|count", los_hours, n_observations and
   the static columns; quote names containing special characters with double quotes),

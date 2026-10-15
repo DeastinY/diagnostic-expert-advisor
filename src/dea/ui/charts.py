@@ -195,3 +195,44 @@ def faceted_histogram(frame: pl.DataFrame, value: str, by: str, title: str, maxb
         .facet(column=alt.Column(f"{by}:N", title=None))
     )
     return _theme(chart)
+
+
+def trajectory(
+    frame: pl.DataFrame, title: str, unit: str = "", by: str | None = None, height: int = 260
+):
+    """Median line with an interquartile band per hour since admission, optionally per group.
+
+    One hue for a single series; the fixed categorical order with a legend for up to eight
+    groups (text stays in ink colors, never in the series color).
+    """
+    df = frame.to_pandas()
+    label = f"{title} ({unit})" if unit else title
+    x = alt.X("hours:Q", title="Hours since admission")
+    tooltip = [
+        alt.Tooltip("hours:Q", title="Hour", format=".0f"),
+        alt.Tooltip("median:Q", title="Median", format=".3~f"),
+        alt.Tooltip("lo:Q", title="25th pct", format=".3~f"),
+        alt.Tooltip("hi:Q", title="75th pct", format=".3~f"),
+        alt.Tooltip("n:Q", title="Encounters"),
+    ]
+    base = alt.Chart(df)
+    if by:
+        groups = list(dict.fromkeys(df[by].astype(str)))[:8]
+        df = df[df[by].astype(str).isin(groups)]
+        base = alt.Chart(df)
+        color = alt.Color(
+            f"{by}:N", scale=alt.Scale(domain=groups, range=SERIES[: len(groups)]), title=by
+        )
+        band = base.mark_area(opacity=0.18).encode(x=x, y="lo:Q", y2="hi:Q", color=color)
+        line = base.mark_line(strokeWidth=2, interpolate="monotone").encode(
+            x=x,
+            y=alt.Y("median:Q", title=label, scale=alt.Scale(zero=False)),
+            color=color,
+            tooltip=[alt.Tooltip(f"{by}:N", title=by), *tooltip],
+        )
+    else:
+        band = base.mark_area(color=ACCENT, opacity=0.18).encode(x=x, y="lo:Q", y2="hi:Q")
+        line = base.mark_line(color=ACCENT, strokeWidth=2, interpolate="monotone").encode(
+            x=x, y=alt.Y("median:Q", title=label, scale=alt.Scale(zero=False)), tooltip=tooltip
+        )
+    return _theme(alt.layer(band, line).properties(height=height))

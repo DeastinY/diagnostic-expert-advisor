@@ -21,6 +21,15 @@ from dea.core.model import ENCOUNTER_ID
 Result = dict[str, Any] | pl.DataFrame | None
 
 
+def _chunks(items: Sequence[Any], size: int) -> list[Sequence[Any]]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def _run_chunk(fn: Callable[[Any], Result], chunk: Sequence[Any]) -> list[Result]:
+    """Apply ``fn`` to a chunk of items inside one worker or one array task."""
+    return [fn(item) for item in chunk]
+
+
 @runtime_checkable
 class Backend(Protocol):
     name: str
@@ -42,23 +51,28 @@ class LocalBackend:
 
     name = "local"
 
-    def __init__(self, max_workers: int | None = None) -> None:
+    def __init__(self, max_workers: int | None = None, chunk_size: int = 1) -> None:
         self.max_workers = max_workers or max(1, (os.cpu_count() or 2) - 1)
+        self.chunk_size = chunk_size
 
     def map(self, fn: Callable[[Any], Result], items: Sequence[Any]) -> list[Result]:
         if not items:
             return []
+        chunks = _chunks(items, self.chunk_size)
         with ProcessPoolExecutor(
-            max_workers=min(self.max_workers, len(items)), mp_context=get_context("spawn")
+            max_workers=min(self.max_workers, len(chunks)), mp_context=get_context("spawn")
         ) as pool:
-            return list(pool.map(fn, items, chunksize=1))
+            results = pool.map(_run_chunk, [fn] * len(chunks), chunks)
+            return [r for chunk in results for r in chunk]
 
 
 class SlurmBackend:
     """Submit one SLURM array job through `submitit <https://github.com/facebookincubator/submitit>`_.
 
-    Requires ``dea[slurm]`` and a machine that can run ``sbatch``. Each encounter becomes one
-    array task; results are collected by waiting on the jobs.
+    Requires ``dea[slurm]`` and a machine that can run ``sbatch``. Encounters are grouped
+    into chunks of ``chunk_size`` and each chunk becomes one array task, so a cohort of
+    70,000 encounters is a few hundred tasks rather than tens of thousands. Results are
+    collected by waiting on the jobs.
 
     .. note:: This adapter has not yet been exercised against a real cluster. Treat it as
        the intended shape of the integration rather than a tested feature.
@@ -75,9 +89,11 @@ class SlurmBackend:
         partition: str | None = None,
         account: str | None = None,
         array_parallelism: int = 64,
+        chunk_size: int = 200,
         **slurm_kwargs: Any,
     ) -> None:
         self.folder = Path(folder)
+        self.chunk_size = chunk_size
         self.params: dict[str, Any] = {
             "timeout_min": timeout_min,
             "mem_gb": mem_gb,
@@ -101,8 +117,9 @@ class SlurmBackend:
             return []
         executor = submitit.AutoExecutor(folder=str(self.folder))
         executor.update_parameters(**self.params)
-        jobs = executor.map_array(fn, list(items))
-        return [job.result() for job in jobs]
+        chunks = _chunks(items, self.chunk_size)
+        jobs = executor.map_array(_run_chunk, [fn] * len(chunks), chunks)
+        return [r for job in jobs for r in job.result()]
 
 
 _BACKENDS: dict[str, type] = {
