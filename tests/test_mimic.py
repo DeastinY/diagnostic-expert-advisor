@@ -37,7 +37,7 @@ def test_import_mimic(mimic_root: Path) -> None:
     assert report.format == "mimic-iv" and report.n_encounters == 5
     assert "Heart Rate" in cohort.variables and "Lactate" in cohort.variables
     assert "Creatinine" in cohort.variables  # labs attached via hadm_id + stay window
-    assert cohort.event_variables == ["Ventilator Mode"]
+    assert cohort.event_variables == ["Discharge note", "Ventilator Mode"]
     assert {"admission_time", "age", "sex", "outcome", "first_careunit"} <= set(
         cohort.static_columns
     )
@@ -45,7 +45,10 @@ def test_import_mimic(mimic_root: Path) -> None:
     assert cohort.config.variable_units["Heart Rate"] == "bpm"
     enc = cohort.get(cohort.encounter_ids[0])
     assert enc.series("Heart Rate")["time"].min().total_seconds() == 0
-    assert set(enc.events["value"].unique()) <= {"CPAP/PSV", "PCV/PSV", "CMV/ASSIST", "Standby"}
+    modes = enc.events.filter(pl.col("variable") == "Ventilator Mode")["value"]
+    assert set(modes.unique()) <= {"CPAP/PSV", "PCV/PSV", "CMV/ASSIST", "Standby"}
+    notes = enc.events.filter(pl.col("variable") == "Discharge note")
+    assert notes.height >= 1 and len(notes["value"][0]) > 20
     weight = enc.series("Admission Weight (Kg)")
     assert weight.height == 1
 

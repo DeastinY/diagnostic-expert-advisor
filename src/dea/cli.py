@@ -174,12 +174,62 @@ def _cmd_suggest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_nlp(args: argparse.Namespace) -> int:
+    from dea.nlp import CONNECTORS, available_connectors, make_annotator
+
+    if args.nlp_command == "list":
+        for name, ok in available_connectors().items():
+            doc = (CONNECTORS[name].__doc__ or "").strip().splitlines()[0]
+            print(f"{'[x]' if ok else '[ ]'} {name:13} {doc}")
+        return 0
+    if args.nlp_command == "install":
+        cls = CONNECTORS[args.connector]
+        if not hasattr(cls, "install"):
+            print(f"{args.connector} needs no model download")
+            return 0
+        cls.install(*([args.model] if args.model else []))
+        print(f"installed {args.connector} model{' ' + args.model if args.model else ''}")
+        return 0
+    from dea.io import load_cohort
+    from dea.nlp import annotate_cohort, entity_summary
+
+    cohort = load_cohort(args.cohort)
+    kwargs = {"model": args.model} if args.model else {}
+    if args.labels:
+        kwargs["labels"] = args.labels
+    annotator = make_annotator(args.connector, **kwargs)
+    entities = annotate_cohort(
+        cohort, annotator, event_variables=args.events or None, static_columns=args.static or None
+    )
+    print(
+        f"{entities.height} entities from {args.connector}; stored under derived/entities.parquet"
+    )
+    print(entity_summary(entities, len(cohort)).head(25))
+    return 0
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     from dea.io import load_cohort
     from dea.report import write_report
 
     out = write_report(load_cohort(args.cohort), args.out)
     print(f"wrote {out}")
+    return 0
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+    except ImportError:
+        print("uvicorn/fastapi are not installed: pip install dea[web]", file=sys.stderr)
+        return 1
+    if args.data_dir:
+        os.environ["DEA_DATA_DIR"] = str(Path(args.data_dir).resolve())
+    data = os.environ.get("DEA_DATA_DIR", "data")
+    print(f"DEA web app on http://{args.host}:{args.port}  (data: {data})")
+    uvicorn.run(
+        "dea.api.app:create_app", factory=True, host=args.host, port=args.port, reload=args.reload
+    )
     return 0
 
 
@@ -271,12 +321,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=_cmd_suggest)
 
+    p = sub.add_parser("nlp", help="local NLP connectors: NER, de-identification, LLM extraction")
+    nsub = p.add_subparsers(dest="nlp_command", required=True)
+    nsub.add_parser("list", help="show connectors and whether they are installed")
+    q = nsub.add_parser("install", help="download a connector's model into DEA_MODELS_DIR")
+    q.add_argument("connector", choices=["spacy", "gliner", "transformers"])
+    q.add_argument("--model")
+    q = nsub.add_parser("run", help="annotate a cohort's free text")
+    q.add_argument("cohort")
+    q.add_argument(
+        "--connector",
+        default="spacy",
+        choices=["spacy", "gliner", "transformers", "presidio", "llm"],
+    )
+    q.add_argument("--model")
+    q.add_argument("--labels", nargs="*", help="entity types for gliner/llm")
+    q.add_argument("--events", nargs="*", help="event variables to annotate (default: all)")
+    q.add_argument("--static", nargs="*", help="static text columns to annotate")
+    p.set_defaults(func=_cmd_nlp)
+
     p = sub.add_parser("report", help="write a one-page HTML report of a cohort")
     p.add_argument("cohort")
     p.add_argument("out")
     p.set_defaults(func=_cmd_report)
 
-    p = sub.add_parser("ui", help="start the Streamlit app")
+    p = sub.add_parser("serve", help="start the web app (FastAPI backend + React frontend)")
+    p.add_argument("--data-dir")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--reload", action="store_true")
+    p.set_defaults(func=_cmd_serve)
+
+    p = sub.add_parser("ui", help="start the legacy Streamlit app")
     p.add_argument("--data-dir")
     p.add_argument("--port", type=int)
     p.add_argument("--headless", action="store_true")

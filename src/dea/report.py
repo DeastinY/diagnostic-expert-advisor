@@ -54,7 +54,7 @@ def render_html(
     cohort: Cohort, profile: CohortProfile | None = None, max_trajectories: int = 4
 ) -> str:
     """Build the report as an HTML string."""
-    from dea.ui import charts  # altair lives in the ui extra
+    from dea import charts  # altair lives in the ui extra
 
     profile = profile or profile_cohort(cohort)
     cfg = cohort.config
