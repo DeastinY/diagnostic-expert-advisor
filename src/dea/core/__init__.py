@@ -3,6 +3,7 @@
 from dea.core.config import CohortConfig, ProcessingConfig, Rule
 from dea.core.model import (
     ENCOUNTER_ID,
+    EVENT_SCHEMA,
     LONG_SCHEMA,
     TIME,
     VALUE,
@@ -16,6 +17,7 @@ from dea.core.time import format_duration, parse_duration
 
 __all__ = [
     "ENCOUNTER_ID",
+    "EVENT_SCHEMA",
     "LONG_SCHEMA",
     "TIME",
     "VALUE",

@@ -10,13 +10,10 @@ from pathlib import Path
 
 
 def _cmd_synth(args: argparse.Namespace) -> int:
-    from dea.synth import generate_cohort
+    from dea.synth import write_synthetic
 
-    cohort = generate_cohort(
-        n_encounters=args.n, seed=args.seed, name=args.name or Path(args.out).name
-    )
-    cohort.save(args.out)
-    print(f"wrote {len(cohort)} synthetic encounters to {args.out}")
+    write_synthetic(args.out, n_encounters=args.n, seed=args.seed, name=args.name)
+    print(f"wrote {args.n} synthetic encounters to {args.out}")
     return 0
 
 

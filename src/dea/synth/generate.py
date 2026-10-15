@@ -16,7 +16,7 @@ import numpy as np
 import polars as pl
 
 from dea.core.config import CohortConfig, ProcessingConfig, Rule
-from dea.core.model import ENCOUNTER_ID, LONG_SCHEMA, TIME, VALUE, VARIABLE, Cohort
+from dea.core.model import ENCOUNTER_ID, EVENT_SCHEMA, LONG_SCHEMA, TIME, VALUE, VARIABLE, Cohort
 
 
 @dataclass(frozen=True)
@@ -133,6 +133,25 @@ def _encounter_long(
     )
 
 
+def _encounter_events(
+    rng: np.random.Generator, eid: str, severity: float, los_s: int
+) -> pl.DataFrame:
+    """String-valued observations: ventilation mode every four hours."""
+    times = np.arange(0, los_s + 1, 14400, dtype=np.int64)
+    modes = np.array(["PSV", "PCV", "VCV", "none"])
+    p = np.array([0.4 - 0.3 * severity, 0.3 + 0.2 * severity, 0.2 + 0.1 * severity, 0.1])
+    p = p / p.sum()
+    values = rng.choice(modes, size=len(times), p=p)
+    return pl.DataFrame(
+        {
+            ENCOUNTER_ID: eid,
+            TIME: pl.Series(times).cast(pl.Int64()),
+            VARIABLE: "Ventilation_Mode",
+            VALUE: values.astype(str),
+        }
+    ).with_columns(pl.duration(seconds=pl.col(TIME)).cast(EVENT_SCHEMA[TIME]).alias(TIME))
+
+
 def default_config(name: str = "synthetic") -> CohortConfig:
     """Config with clinically flavoured filters, tags and plots for the synthetic cohort."""
     return CohortConfig(
@@ -171,23 +190,19 @@ def default_config(name: str = "synthetic") -> CohortConfig:
     )
 
 
-def generate_cohort(
-    n_encounters: int = 40,
-    seed: int = 0,
-    name: str = "synthetic",
-    min_hours: float = 12,
-    max_hours: float = 21 * 24,
-) -> Cohort:
-    """Generate ``n_encounters`` synthetic encounters."""
-    rng = np.random.default_rng(seed)
-    ids = set()
-    while len(ids) < n_encounters:
+def _ids(rng: np.random.Generator, n: int) -> list[str]:
+    ids: set[str] = set()
+    while len(ids) < n:
         ids.add(f"ICU-{rng.integers(2019, 2025)}-{rng.integers(10_000, 99_999)}")
-    id_list = sorted(ids, key=lambda _: rng.random())
+    return sorted(ids, key=lambda _: rng.random())
 
-    static_rows = []
-    parts = []
-    for eid in id_list:
+
+def _generate_batch(
+    rng: np.random.Generator, ids: list[str], min_hours: float, max_hours: float
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Static table, numeric observations and events for the given encounter ids."""
+    static_rows, dynamics, events = [], [], []
+    for eid in ids:
         severity = float(np.clip(rng.beta(2, 3), 0.02, 0.98))
         los_h = float(
             np.clip(
@@ -196,28 +211,58 @@ def generate_cohort(
         )
         los_s = int(los_h * 3600)
         sex = "F" if rng.random() < 0.42 else "M"
-        height = float(np.round(rng.normal(165 if sex == "F" else 178, 7)))
-        weight = float(np.round(rng.normal(72 if sex == "F" else 85, 14)))
-        age = int(np.clip(rng.normal(63, 15), 18, 96))
         admission = rng.choice(["medical", "surgical", "trauma"], p=[0.55, 0.35, 0.10])
         deceased = rng.random() < 0.08 + 0.45 * severity**2
         static_rows.append(
             {
                 ENCOUNTER_ID: eid,
-                "age": age,
+                "age": int(np.clip(rng.normal(63, 15), 18, 96)),
                 "sex": sex,
-                "height_cm": height,
-                "weight_kg": weight,
+                "height_cm": float(np.round(rng.normal(165 if sex == "F" else 178, 7))),
+                "weight_kg": float(np.round(rng.normal(72 if sex == "F" else 85, 14))),
                 "admission_type": str(admission),
                 "admission_year": int(eid.split("-")[1]),
                 "outcome": "deceased" if deceased else "survived",
             }
         )
-        parts.append(_encounter_long(rng, eid, severity, los_s))
+        dynamics.append(_encounter_long(rng, eid, severity, los_s))
+        events.append(_encounter_events(rng, eid, severity, los_s))
+    return pl.DataFrame(static_rows).sort(ENCOUNTER_ID), pl.concat(dynamics), pl.concat(events)
 
-    static = pl.DataFrame(static_rows).sort(ENCOUNTER_ID)
-    dynamic = pl.concat(parts)
-    return Cohort(static, dynamic, config=default_config(name))
+
+def generate_cohort(
+    n_encounters: int = 40,
+    seed: int = 0,
+    name: str = "synthetic",
+    min_hours: float = 12,
+    max_hours: float = 21 * 24,
+) -> Cohort:
+    """Generate ``n_encounters`` synthetic encounters in memory."""
+    rng = np.random.default_rng(seed)
+    static, dynamic, events = _generate_batch(rng, _ids(rng, n_encounters), min_hours, max_hours)
+    return Cohort(static, dynamic, events=events, config=default_config(name))
+
+
+def write_synthetic(
+    path: Path | str,
+    n_encounters: int,
+    seed: int = 0,
+    name: str | None = None,
+    batch_size: int = 200,
+    min_hours: float = 12,
+    max_hours: float = 21 * 24,
+) -> Path:
+    """Generate a cohort of any size straight to disk, ``batch_size`` encounters at a time."""
+    from dea.io.storage import write_cohort_batches
+
+    rng = np.random.default_rng(seed)
+    ids = _ids(rng, n_encounters)
+    batches = (
+        _generate_batch(rng, ids[i : i + batch_size], min_hours, max_hours)
+        for i in range(0, len(ids), batch_size)
+    )
+    config = default_config(name or Path(path).name)
+    return write_cohort_batches(path, config, batches, n_encounters)
 
 
 def write_legacy_csv_tree(cohort: Cohort, path: Path | str, every: str = "1m") -> Path:
