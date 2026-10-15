@@ -9,6 +9,7 @@ from dea.io.importers import (
     import_path,
     import_wide,
     read_table,
+    scan_table,
 )
 from dea.io.storage import (
     CohortInfo,
@@ -34,6 +35,7 @@ __all__ = [
     "list_cohorts",
     "load_cohort",
     "read_table",
+    "scan_table",
     "save_cohort",
     "write_cohort_batches",
 ]
