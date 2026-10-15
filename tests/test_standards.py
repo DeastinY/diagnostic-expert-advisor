@@ -141,11 +141,36 @@ def test_fhir_bundle_with_components_and_loose_observations(tmp_path: Path) -> N
                 }
             },
             {
+                "fullUrl": "urn:uuid:org-1",
+                "resource": {"resourceType": "Organization", "name": "St Elsewhere"},
+            },
+            {
                 "resource": {
                     "resourceType": "Encounter",
                     "id": "e1",
                     "subject": {"reference": "Patient/p1"},
+                    "class": {"code": "IMP"},
+                    "type": [{"text": "Inpatient stay"}],
+                    "serviceProvider": {"reference": "urn:uuid:org-1"},
                     "period": {"start": "2024-01-01T10:00:00Z", "end": "2024-01-03T10:00:00Z"},
+                }
+            },
+            {
+                "resource": {
+                    "resourceType": "Condition",
+                    "id": "c-snomed",
+                    "subject": {"reference": "Patient/p1"},
+                    "encounter": {"reference": "urn:uuid:e1"},
+                    "onsetDateTime": "2024-01-02T08:00:00Z",
+                    "code": {
+                        "coding": [
+                            {
+                                "system": "http://snomed.info/sct",
+                                "code": "19169002",
+                                "display": "Miscarriage in first trimester",
+                            }
+                        ]
+                    },
                 }
             },
             {
@@ -205,8 +230,13 @@ def test_fhir_bundle_with_components_and_loose_observations(tmp_path: Path) -> N
     file.write_text(json.dumps(bundle))
     assert detect(file).format == "fhir"
     cohort, report = import_path(file, name="b")
-    assert len(cohort) == 1 and set(cohort.variables) == {"sbp", "8462-4", "temperature"}
-    assert cohort.event_variables == ["Ventilation mode"]
+    assert len(cohort) == 1 and set(cohort.variables) == {"sbp", "dbp", "temperature"}
+    assert cohort.event_variables == ["Condition", "Ventilation mode"]
+    assert cohort.static["provider"][0] == "St Elsewhere"
+    assert cohort.static["encounter_type"][0] == "Inpatient stay"
+    cond = cohort.events.filter(pl.col("variable") == "Condition").collect()
+    assert cond["value"][0] == "Miscarriage in first trimester"
+    assert cond["time"][0].total_seconds() == 22 * 3600
     temp = cohort.dynamic.filter(pl.col("variable") == "temperature").collect()["value"][0]
     assert temp == pytest.approx(38.0, abs=0.01)
     assert cohort.static["age"][0] == 63 and cohort.static["sex"][0] == "female"

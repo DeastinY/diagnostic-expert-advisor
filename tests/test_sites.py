@@ -38,9 +38,10 @@ def test_multi_site_synthetic_and_checks(tmp_path: Path) -> None:
     assert unit.severity == "warning" and "[degF]" in unit.title
     assert unit.action["fix"]["encounter_where"] == "site = 'Hospital B'"
     assert found["site:coverage:Lactate"].severity == "warning"
-    assert "Hospital C" in found["site:coverage:Lactate"].title
+    assert "Hospital C" in found["site:coverage:Lactate"].detail
     assert "site:coverage:CRP" in found
-    assert found["site:shift:MAP:Hospital B"].severity in ("info", "warning")
+    assert found["site:shift:MAP"].severity in ("info", "warning")
+    assert "Hospital B" in found["site:shift:MAP"].detail
     assert "site:sampling:HR" in found and "Hospital C" in found["site:sampling:HR"].title
     assert not any(k.startswith("site:unit:MAP") for k in found)  # offset is not a unit
 
