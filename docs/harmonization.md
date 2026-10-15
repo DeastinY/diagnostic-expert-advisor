@@ -34,6 +34,35 @@ The range check deliberately uses *hard* physiological limits (a temperature of 
 heart rate of 300), not reference ranges. Its purpose is to catch unit and mapping errors, not
 to flag sick patients.
 
+## Across sites
+
+A cohort pooled from several hospitals, or from several exports of one, hides site-specific
+units, devices, sampling grids and missing variables inside one distribution. DEA therefore
+treats the site as a first-class dimension: `site_column` in `cohort.yaml` names the static
+column (auto-detected at import from names such as `hospital`, `site`, `center`; settable on
+the overview page or with `PUT /site`). With a site column set:
+
+- `dea sites <cohort>`, `GET /api/cohorts/{name}/sites` and the "Across sites" card on the
+  overview show, per variable and site, coverage, quartiles and the typical sampling interval
+  (`site_profile`), plus normalized histograms on shared bins (`site_bins`) so that sites of
+  different size compare directly.
+- `site_checks` (part of `run_checks`, so they also appear as suggestions) report:
+
+| Finding | Meaning | Action |
+|---|---|---|
+| `site:unit` | one site's median is far from the reference site's and a known unit conversion maps it back (°F at one hospital) | convert that site only (`encounter_where` on the fix) |
+| `site:shift` | median differs by more than half an interquartile range (warning above a full one) with no unit explanation: another device, population or definition | review |
+| `site:coverage` | a variable present at some sites is absent at others | know before filtering or modelling |
+| `site:sampling` | typical interval differs 4× or more (one export every minute, another every 5) | resample before comparing aggregates |
+| `site:static` | a static column one site never fills | review |
+| `site:small` | sites with fewer than five encounters, left out of the comparison | none |
+
+The reference site for a variable is the one with the most encounters; all comparisons use a
+stratified sample of up to 200 encounters per site, so the cost stays flat for large cohorts.
+`dea synth out --sites 3` produces a cohort with exactly these problems built in (°F and a MAP
+offset at hospital B, 5-minute vitals and no lactate or CRP at hospital C) for demos and
+tests.
+
 ## Units: UCUM
 
 `src/dea/suggest/units.yaml` maps the unit strings hospitals actually write (`mmHg`, `°F`,

@@ -88,6 +88,10 @@ after it, empty encounters, numbers stored as text. `dea check <cohort>`, the "C
 button on the import form and the profile page show them; fixes apply with one click and are
 recorded in `cohort.yaml`.
 
+Pooled cohorts get a site dimension: per-site distributions, coverage and sampling grids are
+compared on the overview page, and site-specific units, shifts and missing variables become
+findings with site-restricted fixes (`dea sites <cohort>`, `dea synth out --sites 3` for a demo).
+
 Measurements harmonize through the dictionary's LOINC and UCUM codes, diagnoses through
 cross-version ICD groups (`dx_sepsis`, `dx_heart_failure`, ...), and cohorts import from and
 export to FHIR R4 (`dea export <cohort> <dir> --fhir`). See

@@ -14,6 +14,7 @@ export interface CohortConfig {
   name: string; description: string; filters: Rule[]; tags: Rule[]; plots: string[];
   variable_labels: Record<string, string>; variable_units: Record<string, string>;
   processing: Processing; parent: string | null; derived_by: string | null; variable_map: Record<string, string>;
+  site_column: string | null;
 }
 export interface CohortDetail {
   name: string; config: CohortConfig; n_total: number;
@@ -32,6 +33,13 @@ export interface Suggestion {
 export interface Check {
   id: string; severity: "info" | "warning" | "error"; title: string; detail: string; variables: string[];
   action: Record<string, unknown> | null; n: number;
+}
+export interface SiteComparison {
+  column: string | null; candidates: string[]; configured: string | null;
+  sizes?: { n: number; [k: string]: unknown }[];
+  profile: { site: string; variable: string; n_encounters: number; coverage: number; n_obs: number; median: number | null; p25: number | null; p75: number | null; interval_s: number | null }[];
+  checks: Check[];
+  charts: { distributions?: object | null; coverage?: object | null; sampling?: object | null };
 }
 export interface UnitReport { variable: string; canonical: string; label: string; seen: Record<string, number>; converted: Record<string, number>; unconvertible: Record<string, number>; mixed: boolean }
 export interface ImportReport {
@@ -88,7 +96,7 @@ export const api = {
   cohorts: () => request<CohortInfo[]>("/api/cohorts"),
   cohort: (name: string, where: Where = []) => request<CohortDetail>(`/api/cohorts/${name}${qs({}, where)}`),
   deleteCohort: (name: string) => request<void>(`/api/cohorts/${name}`, { method: "DELETE" }),
-  demo: (body: { name: string; n: number; mimic: boolean }) =>
+  demo: (body: { name: string; n: number; mimic: boolean; sites?: number }) =>
     request<{ name: string }>("/api/cohorts/demo", { method: "POST", body: JSON.stringify(body) }),
   detect: (path: string) => request<Detection>("/api/detect", { method: "POST", body: JSON.stringify({ path }) }),
   import: (body: { path: string; name?: string; overrides: Record<string, unknown> }) =>
@@ -96,6 +104,10 @@ export const api = {
   preview: (body: { path: string; name?: string; overrides: Record<string, unknown> }) =>
     request<{ name: string; report: ImportReport }>("/api/cohorts/preview", { method: "POST", body: JSON.stringify(body) }),
   checks: (name: string) => request<Check[]>(`/api/cohorts/${name}/checks`),
+  sites: (name: string, where: Where, column?: string) =>
+    request<SiteComparison>(`/api/cohorts/${name}/sites${qs({ column, dark: isDark() }, where)}`),
+  setSite: (name: string, column: string | null) =>
+    request<{ site_column: string | null }>(`/api/cohorts/${name}/site`, { method: "PUT", body: JSON.stringify({ column }) }),
   importReport: (name: string) => request<ImportReport | Record<string, never>>(`/api/cohorts/${name}/import`),
   upload: async (file: File) => {
     const fd = new FormData();

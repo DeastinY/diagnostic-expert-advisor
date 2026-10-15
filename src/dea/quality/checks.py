@@ -15,6 +15,7 @@ import polars as pl
 
 from dea.core.model import ENCOUNTER_ID, TIME, VALUE, VARIABLE, Cohort, collect
 from dea.profile import CohortProfile, profile_cohort
+from dea.quality.sites import detect_site_column
 from dea.suggest.units import UnitReport, load_units
 from dea.suggest.vocab import Concept, load_dictionary
 
@@ -395,6 +396,11 @@ def run_checks(
     out += cluster_checks(cohort, skip=flagged)
     out += structural_checks(cohort, profile)
     out += event_checks(cohort, profile)
+    site_col = cohort.config.site_column or detect_site_column(cohort.static)
+    if site_col and site_col in cohort.static.columns:
+        from dea.quality.sites import site_checks
+
+        out += site_checks(cohort, site_col)
     order = {"error": 0, "warning": 1, "info": 2}
     return sorted(out, key=lambda c: (order[c.severity], -c.n))
 

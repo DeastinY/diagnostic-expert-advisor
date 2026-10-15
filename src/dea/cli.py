@@ -8,6 +8,8 @@ import os
 import sys
 from pathlib import Path
 
+import polars as pl
+
 
 def _cmd_synth(args: argparse.Namespace) -> int:
     if args.mimic:
@@ -18,7 +20,7 @@ def _cmd_synth(args: argparse.Namespace) -> int:
         return 0
     from dea.synth import write_synthetic
 
-    write_synthetic(args.out, n_encounters=args.n, seed=args.seed, name=args.name)
+    write_synthetic(args.out, n_encounters=args.n, seed=args.seed, name=args.name, sites=args.sites)
     print(f"wrote {args.n} synthetic encounters to {args.out}")
     return 0
 
@@ -215,6 +217,37 @@ def _cmd_check(args: argparse.Namespace) -> int:
     return 1 if any(c.severity == "error" for c in found) else 0
 
 
+def _cmd_sites(args: argparse.Namespace) -> int:
+    from dea.io import load_cohort
+    from dea.quality import detect_site_column, site_checks, site_profile
+
+    cohort = load_cohort(args.cohort)
+    col = args.column or cohort.config.site_column or detect_site_column(cohort.static)
+    if not col:
+        print("no site column found; pass --column", file=sys.stderr)
+        return 1
+    prof = site_profile(cohort, col)
+    print(f"site column: {col}")
+    with pl.Config(tbl_rows=200, tbl_cols=12, fmt_str_lengths=40):
+        print(
+            prof.select(
+                "site",
+                "variable",
+                "n_encounters",
+                "coverage",
+                "n_obs",
+                "median",
+                "p25",
+                "p75",
+                "interval_s",
+            )
+        )
+    for c in site_checks(cohort, col, prof):
+        print(f"{c.severity:>7}  {c.title}")
+        print(f"         {c.detail}")
+    return 0
+
+
 def _cmd_export(args: argparse.Namespace) -> int:
     from dea.io import load_cohort
 
@@ -266,6 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--name")
     p.add_argument("--mimic", action="store_true", help="write MIMIC-IV-shaped CSV tables instead")
+    p.add_argument("--sites", type=int, default=1, help="spread encounters over N hospitals")
     p.set_defaults(func=_cmd_synth)
 
     p = sub.add_parser("detect", help="guess the layout of a data source")
@@ -290,6 +324,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("cohort")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_check)
+
+    p = sub.add_parser("sites", help="compare variables across sites / hospitals / exports")
+    p.add_argument("cohort")
+    p.add_argument("--column", help="static column naming the site")
+    p.set_defaults(func=_cmd_sites)
 
     p = sub.add_parser("export", help="export a cohort as a wide Parquet table or FHIR NDJSON")
     p.add_argument("cohort")

@@ -2,11 +2,11 @@ import { useState } from "react";
 import { useCohort } from "../App";
 import { api, fmt } from "../api";
 import { FilterBar } from "../components/FilterBuilder";
-import { Card, Kpi, Spinner, useAsync, Alert } from "../components/ui";
+import { Card, ChecksList, Kpi, Spinner, toast, useAsync, Alert } from "../components/ui";
 import { VegaChart } from "../components/VegaChart";
 
 export function Overview() {
-  const { name, detail, where, setWhere, error } = useCohort();
+  const { name, detail, where, setWhere, error, reload } = useCohort();
   const [staticCol, setStaticCol] = useState<string>("");
   const [variable, setVariable] = useState<string>("");
   const [by, setBy] = useState<string>("");
@@ -70,6 +70,7 @@ export function Overview() {
             <VegaChart spec={charts.data?.variable} height={200} />
           </Card>
         </div>
+        <SitesCard name={name} where={where} configured={cfg!.site_column} onChange={reload} />
         <Card title="Trajectories" actions={
           <div className="row">
             <select value={tv} onChange={(e) => setTvar(e.target.value)}>{detail.variables.map((c) => <option key={c} value={c}>{cfg!.variable_labels[c] ?? c}</option>)}</select>
@@ -82,5 +83,46 @@ export function Overview() {
         </Card>
       </div>
     </>
+  );
+}
+
+
+function SitesCard({ name, where, configured, onChange }: { name: string; where: string[]; configured: string | null; onChange: () => void }) {
+  const [column, setColumn] = useState<string>("");
+  const col = column || configured || "";
+  const cmp = useAsync(() => api.sites(name, where, col || undefined), [name, where.join("|"), col]);
+  const d = cmp.data;
+  if (cmp.loading && !d) return <Card title="Across sites"><Spinner /></Card>;
+  if (!d || (!d.column && d.candidates.length === 0)) return null;
+  const pick = (
+    <div className="row">
+      <select value={d.column ?? ""} onChange={(e) => setColumn(e.target.value)}>
+        <option value="">choose a site column</option>
+        {d.candidates.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      {d.column && d.column !== d.configured && (
+        <button className="sm" onClick={async () => { await api.setSite(name, d.column); toast(`Site column set to ${d.column}`); onChange(); }}>Use as site column</button>
+      )}
+    </div>
+  );
+  if (!d.column) return <Card title="Across sites" actions={pick}><p className="muted small">Pick the static column that names the hospital, site or export to compare distributions, coverage and sampling between them.</p></Card>;
+  const warn = d.checks.filter((c) => c.severity !== "info").length;
+  return (
+    <Card title={`Across sites · ${d.column}`} actions={pick}>
+      <div className="row" style={{ marginBottom: 8 }}>
+        {(d.sizes ?? []).map((r) => <span key={String(r[d.column!])} className="chip">{String(r[d.column!])} <span className="k">{r.n}</span></span>)}
+        {warn > 0 && <span className="chip warn">{warn} finding(s)</span>}
+      </div>
+      <p className="muted small">Each curve is the share of that site's observations per bin, so sites of different size compare directly. Twelve most observed variables, from a sample of encounters per site.</p>
+      {cmp.loading ? <Spinner /> : <VegaChart spec={d.charts.distributions} />}
+      <div className="grid c2" style={{ marginTop: 12 }}>
+        <div><VegaChart spec={d.charts.coverage} /></div>
+        <div><VegaChart spec={d.charts.sampling} /></div>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <b className="small">Findings</b>
+        <ChecksList checks={d.checks} empty="No systematic differences between sites." />
+      </div>
+    </Card>
   );
 }

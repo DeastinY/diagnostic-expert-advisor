@@ -595,3 +595,132 @@ def faceted_histogram(
 ):
     """Kept for compatibility: prefer :func:`group_boxplot` for comparisons."""
     return group_boxplot(frame, value, by, title, dark=dark)
+
+
+def site_distributions(
+    bins: pl.DataFrame,
+    labels: dict[str, str] | None = None,
+    units: dict[str, str] | None = None,
+    columns: int = 3,
+    dark: bool = False,
+    width: int = 260,
+    height: int = 110,
+):
+    """One panel per variable, one normalized step-histogram per site, shared bins.
+
+    Sites of different size compare because each curve is a share of that site's
+    observations, not a count. From :func:`dea.quality.site_bins`.
+    """
+    t = theme(dark)
+    labels, units = labels or {}, units or {}
+    if bins.is_empty():
+        return None
+    names = bins.get_column(VARIABLE).unique().to_list()
+    df = bins.with_columns(
+        pl.col(VARIABLE)
+        .replace_strict(
+            {v: _label(labels.get(v, v), units.get(v, "")) for v in names},
+            default=pl.col(VARIABLE),
+        )
+        .alias("panel")
+    ).to_pandas()
+    sites = sorted(bins.get_column("site").unique().to_list())
+    color = alt.Color(
+        "site:N",
+        title="Site",
+        scale=alt.Scale(domain=sites, range=list(t.series)[: len(sites)]),
+        legend=alt.Legend(orient="top", direction="horizontal"),
+    )
+    base = alt.Chart(df).encode(
+        x=alt.X("lo:Q", title=None, axis=alt.Axis(labelFontSize=9, tickCount=4)),
+        y=alt.Y("fraction:Q", title=None, axis=None, stack=None),  # overlay, never stack
+        color=color,
+    )
+    area = base.mark_area(interpolate="step-after", opacity=0.22)
+    line = base.mark_line(interpolate="step-after", strokeWidth=1.6).encode(
+        tooltip=[
+            alt.Tooltip("panel:N", title="Variable"),
+            alt.Tooltip("site:N", title="Site"),
+            alt.Tooltip("lo:Q", title="from", format=".3~f"),
+            alt.Tooltip("hi:Q", title="to", format=".3~f"),
+            alt.Tooltip("fraction:Q", title="Share", format=".1%"),
+            alt.Tooltip("count:Q", title="Observations"),
+        ]
+    )
+    chart = (
+        alt.layer(area, line)
+        .properties(width=width, height=height)
+        .facet(
+            facet=alt.Facet(
+                "panel:N",
+                title=None,
+                header=alt.Header(
+                    labelFontSize=11, labelAlign="left", labelAnchor="start", labelPadding=2
+                ),
+            ),
+            columns=columns,
+        )
+        .resolve_scale(x="independent", y="independent")
+    )
+    return _apply(chart, t)
+
+
+def site_matrix(
+    profile: pl.DataFrame,
+    value: str,
+    title: str,
+    fmt: str = ".0%",
+    labels: dict[str, str] | None = None,
+    dark: bool = False,
+    domain: tuple[float, float] | None = (0, 1),
+    log: bool = False,
+):
+    """Variables × sites heatmap of one column of :func:`dea.quality.site_profile`."""
+    t = theme(dark)
+    labels = labels or {}
+    if profile.is_empty():
+        return None
+    order = (
+        profile.group_by(VARIABLE)
+        .agg(pl.col(value).mean().alias("m"))
+        .sort(["m", VARIABLE], descending=[True, False])
+        .get_column(VARIABLE)
+        .to_list()
+    )
+    df = profile.with_columns(
+        pl.col(VARIABLE)
+        .replace_strict({v: labels.get(v, v) for v in order}, default=pl.col(VARIABLE))
+        .alias("label")
+    ).to_pandas()
+    scale = alt.Scale(range=list(t.sequential), type="log" if log else "linear")
+    if domain and not log:
+        scale = alt.Scale(domain=list(domain), range=list(t.sequential))
+    base = alt.Chart(df).encode(
+        x=alt.X("site:N", title=None, axis=alt.Axis(labelAngle=0, orient="top")),
+        y=alt.Y(
+            "label:N",
+            sort=[labels.get(v, v) for v in order],
+            title=None,
+            axis=alt.Axis(labelLimit=200, labelOverlap=False),
+        ),
+    )
+    rect = base.mark_rect(stroke=t.surface, strokeWidth=1).encode(
+        color=alt.Color(f"{value}:Q", title=title, scale=scale, legend=None),
+        tooltip=[
+            alt.Tooltip("label:N", title="Variable"),
+            alt.Tooltip("site:N", title="Site"),
+            alt.Tooltip(f"{value}:Q", title=title, format=fmt),
+            alt.Tooltip("n_encounters:Q", title="Encounters"),
+            alt.Tooltip("n_obs:Q", title="Observations"),
+        ],
+    )
+    text = base.mark_text(fontSize=10).encode(
+        text=alt.Text(f"{value}:Q", format=fmt),
+        color=alt.condition(
+            f"datum.{value} > {0.6 if not log else 1e9}", alt.value(t.surface), alt.value(t.ink)
+        ),
+    )
+    chart = alt.layer(rect, text).properties(
+        width=alt.Step(64), height=alt.Step(20), title=alt.Title(title, anchor="start")
+    )
+    return _apply(chart, t)
