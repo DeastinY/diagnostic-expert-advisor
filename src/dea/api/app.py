@@ -217,6 +217,7 @@ def create_app(
             },
             "variables": full.variables,
             "event_variables": full.event_variables,
+            "interval_variables": full.interval_variables,
             "static_columns": full.static_columns,
             "derived": full.list_derived(),
         }
@@ -557,6 +558,15 @@ def create_app(
             "n_observations": e.n_observations,
             "variables": e.variables,
             "events": _records(events.select("hours", "variable", "value"), 2000),
+            "intervals": _records(
+                e.intervals.sort("start").select(
+                    (pl.col("start").dt.total_seconds() / 3600).alias("start_h"),
+                    (pl.col("end").dt.total_seconds() / 3600).alias("end_h"),
+                    "variable",
+                    "value",
+                ),
+                500,
+            ),
             "plots": [v for v in cohort.config.plots if v in e.variables] or e.variables[:6],
         }
 

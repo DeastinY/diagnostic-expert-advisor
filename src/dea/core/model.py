@@ -20,6 +20,7 @@ Static, per-encounter information lives in one table keyed by ``encounter_id``.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -46,8 +47,19 @@ LONG_SCHEMA: dict[str, pl.DataType] = {
     VALUE: pl.Float64(),
 }
 EVENT_SCHEMA: dict[str, pl.DataType] = {**LONG_SCHEMA, VALUE: pl.String()}
+START = "start"
+END = "end"
+# Interventions that last: infusions (value = rate), ventilation episodes, procedures.
+INTERVAL_SCHEMA: dict[str, pl.DataType] = {
+    ENCOUNTER_ID: pl.String(),
+    START: pl.Duration(time_unit="us"),
+    END: pl.Duration(time_unit="us"),
+    VARIABLE: pl.String(),
+    VALUE: pl.Float64(),
+}
 
 FEATURE_AGGS = ("min", "max", "mean", "first", "last", "count")
+_HOURS_REF = re.compile(r'"([^"]+__hours)"')
 FEATURE_VARIABLE_LIMIT = 200
 
 
@@ -173,12 +185,14 @@ class Encounter:
     static: dict[str, Any]
     dynamic: pl.DataFrame
     events: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(schema=EVENT_SCHEMA))
+    intervals: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(schema=INTERVAL_SCHEMA))
     config: CohortConfig | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.id = str(self.id)
         self.dynamic = ensure_schema(self.dynamic, LONG_SCHEMA).drop(ENCOUNTER_ID).collect()
         self.events = ensure_schema(self.events, EVENT_SCHEMA).drop(ENCOUNTER_ID).collect()
+        self.intervals = ensure_schema(self.intervals, INTERVAL_SCHEMA).drop(ENCOUNTER_ID).collect()
 
     @property
     def variables(self) -> list[str]:
@@ -189,6 +203,10 @@ class Encounter:
         return sorted(self.events.get_column(VARIABLE).unique().to_list())
 
     @property
+    def interval_variables(self) -> list[str]:
+        return sorted(self.intervals.get_column(VARIABLE).unique().to_list())
+
+    @property
     def n_observations(self) -> int:
         return self.dynamic.height
 
@@ -196,7 +214,11 @@ class Encounter:
     def length_of_stay(self) -> timedelta:
         times = [
             t
-            for t in (self.dynamic.get_column(TIME).max(), self.events.get_column(TIME).max())
+            for t in (
+                self.dynamic.get_column(TIME).max(),
+                self.events.get_column(TIME).max(),
+                self.intervals.get_column(END).max(),
+            )
             if t
         ]
         return max(times) if times else timedelta(0)  # type: ignore[return-value]
@@ -280,6 +302,7 @@ class Cohort:
         name: str | None = None,
         _features: pl.DataFrame | None = None,
         _full: bool = True,
+        intervals: pl.DataFrame | pl.LazyFrame | None = None,
     ) -> None:
         if ENCOUNTER_ID not in static.columns:
             raise ValueError(f"static table needs an '{ENCOUNTER_ID}' column")
@@ -292,6 +315,10 @@ class Cohort:
         self.dynamic: pl.LazyFrame = ensure_schema(dynamic, LONG_SCHEMA)
         self.events: pl.LazyFrame = ensure_schema(
             events if events is not None else pl.LazyFrame(schema=EVENT_SCHEMA), EVENT_SCHEMA
+        )
+        self.intervals: pl.LazyFrame = ensure_schema(
+            intervals if intervals is not None else pl.LazyFrame(schema=INTERVAL_SCHEMA),
+            INTERVAL_SCHEMA,
         )
         self.config: CohortConfig = config or CohortConfig(name=name or "cohort")
         if name:
@@ -338,6 +365,7 @@ class Cohort:
             static=static,
             dynamic=collect(self.dynamic.filter(match)),
             events=collect(self.events.filter(match)),
+            intervals=collect(self.intervals.filter(match)),
             config=self.config,
         )
 
@@ -354,12 +382,14 @@ class Cohort:
         match = pl.col(ENCOUNTER_ID).is_in(wanted)
         dyn = {k[0]: v for k, v in collect(self.dynamic.filter(match)).group_by(ENCOUNTER_ID)}
         evt = {k[0]: v for k, v in collect(self.events.filter(match)).group_by(ENCOUNTER_ID)}
+        ivl = {k[0]: v for k, v in collect(self.intervals.filter(match)).group_by(ENCOUNTER_ID)}
         return [
             Encounter(
                 id=eid,
                 static=static_rows[eid],
                 dynamic=dyn.get(eid, pl.DataFrame(schema=LONG_SCHEMA)),
                 events=evt.get(eid, pl.DataFrame(schema=EVENT_SCHEMA)),
+                intervals=ivl.get(eid, pl.DataFrame(schema=INTERVAL_SCHEMA)),
                 config=self.config,
             )
             for eid in wanted
@@ -385,6 +415,12 @@ class Cohort:
     @property
     def event_variables(self) -> list[str]:
         return sorted(collect(self.events.select(pl.col(VARIABLE).unique())).get_column(VARIABLE))
+
+    @property
+    def interval_variables(self) -> list[str]:
+        return sorted(
+            collect(self.intervals.select(pl.col(VARIABLE).unique())).get_column(VARIABLE)
+        )
 
     @property
     def static_columns(self) -> list[str]:
@@ -444,6 +480,22 @@ class Cohort:
                 pl.col(VALUE).count().cast(pl.Float64()).alias("count"),
             )
         )
+        hours = collect(
+            self.intervals.group_by(ENCOUNTER_ID, VARIABLE).agg(
+                ((pl.col(END) - pl.col(START)).dt.total_seconds().clip(0) / 3600.0)
+                .sum()
+                .alias("hours")
+            )
+        )
+        if hours.height:  # <variable>__hours: total duration of an intervention per stay
+            per_hours = hours.pivot(
+                on=VARIABLE, index=ENCOUNTER_ID, values="hours", aggregate_function="first"
+            )
+            per_hours = per_hours.rename(
+                {c: f"{c}__hours" for c in per_hours.columns if c != ENCOUNTER_ID}
+            )
+        else:
+            per_hours = None
         if per_var.is_empty():
             wide_vars = pl.DataFrame(schema={ENCOUNTER_ID: pl.String()})
         else:
@@ -453,6 +505,11 @@ class Cohort:
                 )
                 .with_columns((pl.col(VARIABLE) + pl.lit("__") + pl.col("agg")).alias("feature"))
                 .pivot(on="feature", index=ENCOUNTER_ID, values=VALUE, aggregate_function="first")
+            )
+        if per_hours is not None:
+            wide_vars = wide_vars.join(per_hours, on=ENCOUNTER_ID, how="full", coalesce=True)
+            wide_vars = wide_vars.with_columns(
+                [pl.col(c).fill_null(0.0) for c in per_hours.columns if c != ENCOUNTER_ID]
             )
         return (
             self.static.join(collect(stay), on=ENCOUNTER_ID, how="left")
@@ -469,6 +526,16 @@ class Cohort:
         """Evaluate a rule expression against :meth:`features`; returns a boolean series."""
         feats = self.features()
         expr = pl.sql_expr(where) if isinstance(where, str) else where
+        if isinstance(where, str):
+            # an intervention nobody in this cohort received has no <x>__hours column; the
+            # rule still means "zero hours of it", so supply the column rather than fail
+            missing = [
+                c
+                for c in set(_HOURS_REF.findall(where))
+                if c.endswith("__hours") and c not in feats.columns
+            ]
+            if missing:
+                feats = feats.with_columns([pl.lit(0.0).alias(c) for c in missing])
         try:
             result = feats.select(expr.alias("_match")).get_column("_match")
         except Exception as exc:  # polars raises several error types
@@ -513,6 +580,7 @@ class Cohort:
             self.static.filter(match),
             self.dynamic.filter(match),
             events=self.events.filter(match),
+            intervals=self.intervals.filter(match),
             config=self.config,
             root=self.root,
             _features=feats,
@@ -534,6 +602,7 @@ class Cohort:
             self.static,
             self.dynamic.with_columns(rename),
             events=self.events.with_columns(rename),
+            intervals=self.intervals.with_columns(rename),
             config=self.config.renamed(mapping),
             root=self.root,
             _full=self._full,
@@ -580,6 +649,7 @@ class Cohort:
             self.static,
             dynamic,
             events=self.events,
+            intervals=self.intervals,
             config=config,
             root=self.root,
             _full=self._full,
@@ -595,6 +665,7 @@ class Cohort:
             self.static,
             self.dynamic.unique(subset=[ENCOUNTER_ID, TIME, VARIABLE], keep="first"),
             events=self.events,
+            intervals=self.intervals,
             config=config,
             root=self.root,
             _full=self._full,
@@ -620,7 +691,9 @@ class Cohort:
         config.parent = str(self.root) if self.root else self.name
         config.derived_by = " AND ".join(rules)
         config.feature_variables = config.feature_variables
-        out = Cohort(sub.static, sub.dynamic, events=sub.events, config=config)
+        out = Cohort(
+            sub.static, sub.dynamic, events=sub.events, intervals=sub.intervals, config=config
+        )
         out.save(path)
         return out
 
@@ -678,6 +751,7 @@ class Cohort:
             static,
             self.dynamic.filter(~pl.col(VARIABLE).is_in(names)),
             events=self.events,
+            intervals=self.intervals,
             config=config,
             root=self.root,
             _full=self._full,

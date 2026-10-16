@@ -22,7 +22,7 @@ export interface CohortDetail {
   name: string; config: CohortConfig; n_total: number;
   summary: { n_encounters: number; n_variables: number; n_observations: number; los_hours_median: number;
     los_hours_max: number; median_stay: string; longest_stay: string };
-  variables: string[]; event_variables: string[]; static_columns: string[]; derived: string[];
+  variables: string[]; event_variables: string[]; interval_variables: string[]; static_columns: string[]; derived: string[];
 }
 export interface CatalogEntry {
   name: string; source: "static" | "stay" | "aggregate"; label: string; kind: "numeric" | "categorical" | "boolean" | "temporal";
@@ -56,6 +56,7 @@ export interface EncounterPage {
 export interface EncounterDetail {
   id: string; static: Record<string, unknown>; los_hours: number; n_observations: number; variables: string[];
   events: { hours: number; variable: string; value: string }[]; plots: string[];
+  intervals: { start_h: number; end_h: number; variable: string; value: number }[];
 }
 export interface Recommendation {
   summary: string; resample_every: string; aggregate: string; default_fill: string;

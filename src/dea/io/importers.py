@@ -74,6 +74,7 @@ class ImportReport:
     n_variables: int = 0
     n_observations: int = 0
     n_events: int = 0
+    n_intervals: int = 0
     mapping: dict[str, Any] = field(default_factory=dict)
     event_columns: list[str] = field(default_factory=list)
     dropped_columns: list[str] = field(default_factory=list)
@@ -111,6 +112,8 @@ class ImportReport:
         ]
         if self.n_events:
             lines.append(f"events (string-valued): {self.n_events}")
+        if self.n_intervals:
+            lines.append(f"intervals (infusions, procedures): {self.n_intervals}")
         if self.mapping:
             lines.append("mapping: " + ", ".join(f"{k}={v}" for k, v in self.mapping.items() if v))
         if self.event_columns:

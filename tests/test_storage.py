@@ -105,6 +105,7 @@ def test_feature_variable_cap(cohort: Cohort) -> None:
     try:
         feats = cohort._compute_features()
         agg_cols = [c for c in feats.columns if "__" in c]
+        agg_cols = [c for c in agg_cols if not c.endswith("__hours")]  # intervals are not capped
         assert agg_cols == [f"HR__{a}" for a in ("min", "max", "mean", "first", "last", "count")]
     finally:
         cohort.config.feature_variables = None
