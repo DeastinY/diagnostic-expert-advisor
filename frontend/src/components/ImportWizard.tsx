@@ -115,23 +115,52 @@ function UnitRows({ reports }: { reports: UnitReport[] }) {
   );
 }
 
+const SEV_W = { error: 3, warning: 2, info: 1 } as const;
+const TOP = 5;
+
+/** Bigger first: severity, then how much of the data a finding touches. */
+function priority(c: Check, total: number): number {
+  const share = total ? Math.min(1, c.n / total) : 0;
+  return SEV_W[c.severity] * 10 + (c.recommended ? 1 : 0) + share * 5 + Math.log10(c.n + 1) / 10;
+}
+
+function share(c: Check, total: number): string {
+  if (!total || !c.n || c.id.startsWith("coverage")) return "";
+  const p = (c.n / total) * 100;
+  return p >= 10 ? `${p.toFixed(0)}% of rows` : p >= 0.1 ? `${p.toFixed(1)}% of rows` : "<0.1% of rows";
+}
+
+function Verdict({ r, fixable }: { r: ImportReport; fixable: Check[] }) {
+  const s = r.summary;
+  const rec = fixable.filter((c) => c.recommended).length;
+  let text: string; let cls: string;
+  if (s.error) { text = `${s.error} thing${s.error === 1 ? "" : "s"} need${s.error === 1 ? "s" : ""} a look before this is useful.`; cls = "danger"; }
+  else if (rec) { text = `Looks usable. ${rec} quick fix${rec === 1 ? " is" : "es are"} recommended, the rest can wait.`; cls = "good"; }
+  else if (fixable.length) { text = "Looks usable. Nothing needs fixing right away; a few optional fixes below."; cls = "good"; }
+  else if (s.warning) { text = "Looks usable. Nothing to fix now; a few things to look at later."; cls = "good"; }
+  else { text = "Clean. Nothing stood out."; cls = "good"; }
+  return <div className={`verdict ${cls} rise`}>{text}</div>;
+}
+
 function Review({ report, selected, onToggle, busy }: { report: ImportReport; selected: Set<string>; onToggle: (id: string, on: boolean) => void; busy: boolean }) {
-  const fixable = report.checks.filter((c) => c.action);
-  const later = report.checks.filter((c) => !c.action && !c.id.startsWith("units:")); // converted units are in the table below
+  const [showAll, setShowAll] = useState(false);
+  const total = report.n_observations;
+  const fixable = useMemo(() => report.checks.filter((c) => c.action).sort((a, b) => priority(b, total) - priority(a, total)), [report, total]);
+  const later = useMemo(() => report.checks.filter((c) => !c.action && !c.id.startsWith("units:")), [report]); // converted units are in the table below
   const s = report.summary;
-  const groups = useMemo(() => {
-    const m = new Map<string, Check[]>();
-    for (const c of fixable) m.set(family(c.id), [...(m.get(family(c.id)) ?? []), c]);
-    return [...m.entries()];
-  }, [fixable]);
   const laterGroups = useMemo(() => {
     const m = new Map<string, Check[]>();
     for (const c of later) m.set(family(c.id), [...(m.get(family(c.id)) ?? []), c]);
-    return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
+    const sev = (list: Check[]) => Math.max(...list.map((c) => SEV_W[c.severity]));
+    return [...m.entries()].sort((a, b) => sev(b[1]) - sev(a[1]) || b[1].length - a[1].length);
   }, [later]);
+  const shown = showAll ? fixable : fixable.slice(0, TOP);
+  const hidden = fixable.length - shown.length;
+  const hiddenSelected = fixable.slice(TOP).filter((c) => selected.has(c.id)).length;
   return (
     <div className="stack">
       <Tiles r={report} />
+      <Verdict r={report} fixable={fixable} />
       <div className="sevbar rise d2">
         <span><i className="dot error" />{s.error} error{s.error === 1 ? "" : "s"}</span>
         <span><i className="dot warning" />{s.warning} warning{s.warning === 1 ? "" : "s"}</span>
@@ -142,41 +171,51 @@ function Review({ report, selected, onToggle, busy }: { report: ImportReport; se
       {report.applied.length > 0 && <div className="applied rise">✓ {report.applied.length} fix{report.applied.length === 1 ? "" : "es"} applied. What is listed below is what remains.</div>}
       {report.warnings.map((w) => <Alert key={w}>{w}</Alert>)}
 
-      <div className="rise d3">
-        <div className="row spread">
-          <b>Fix now{fixable.length ? ` (${selected.size} of ${fixable.length} selected)` : ""}</b>
-          {fixable.length > 0 && <span className="small muted">Recommended ones are ticked. Everything is recorded in cohort.yaml.</span>}
-        </div>
-        {fixable.length === 0 ? <p className="small muted">Nothing left that DEA can fix on its own.</p> : groups.map(([g, list]) => (
-          <div key={g} className="fixgroup">
-            <h4>{g}</h4>
-            <div className="fixes">
-              {list.map((c) => (
-                <label key={c.id} className={`fix${selected.has(c.id) ? " on" : ""}`}>
-                  <input type="checkbox" checked={selected.has(c.id)} disabled={busy} onChange={(e) => onToggle(c.id, e.target.checked)} />
-                  <div>
-                    <div className="t"><SeverityChip severity={c.severity} /> {c.title}</div>
-                    <div className="d">{c.detail}</div>
-                  </div>
-                  <span className="eff">{effect(c)}</span>
-                </label>
-              ))}
-            </div>
+      {fixable.length > 0 && (
+        <div className="rise d3">
+          <div className="row spread">
+            <b>Fix now <span className="muted" style={{ fontWeight: 500 }}>({selected.size} of {fixable.length} ticked, biggest first)</span></b>
+            <span className="small muted">Recommended ones are ticked. Everything is recorded in cohort.yaml.</span>
           </div>
-        ))}
-      </div>
+          <div className="fixes" style={{ marginTop: 8 }}>
+            {shown.map((c) => (
+              <label key={c.id} className={`fix${selected.has(c.id) ? " on" : ""}`}>
+                <input type="checkbox" checked={selected.has(c.id)} disabled={busy} onChange={(e) => onToggle(c.id, e.target.checked)} />
+                <div>
+                  <div className="t"><SeverityChip severity={c.severity} /> {c.title}</div>
+                  <div className="d">{c.detail}</div>
+                </div>
+                <span className="eff"><span className="fam">{family(c.id)}</span>{effect(c)}{share(c, total) ? <span className="muted"> · {share(c, total)}</span> : null}</span>
+              </label>
+            ))}
+          </div>
+          {hidden > 0 && (
+            <button className="ghost sm" style={{ marginTop: 6 }} onClick={() => setShowAll(true)}>
+              Show {hidden} smaller one{hidden === 1 ? "" : "s"}{hiddenSelected ? ` (${hiddenSelected} ticked)` : ""} ↓
+            </button>
+          )}
+          {showAll && fixable.length > TOP && <button className="ghost sm" style={{ marginTop: 6 }} onClick={() => setShowAll(false)}>Show fewer ↑</button>}
+        </div>
+      )}
 
       <div className="later rise d4">
+        {(fixable.length === 0 || later.length > 0) && <div className="small muted" style={{ padding: "4px 0 8px" }}>{fixable.length === 0 ? "Nothing to fix right away. " : ""}For later, on the profile page:</div>}
+        {laterGroups.map(([g, list]) => (
+          <details key={g}>
+            <summary>
+              <SeverityChip severity={list.some((c) => c.severity === "error") ? "error" : list.some((c) => c.severity === "warning") ? "warning" : "info"} />
+              {g}
+              <span className="preview muted">{list.slice(0, 3).map((c) => c.variables[0] ?? c.title).join(", ")}{list.length > 3 ? ", …" : ""}</span>
+              <span className="count">{list.length}</span>
+            </summary>
+            {list.slice(0, 8).map((c) => <div key={c.id} className="item"><b>{c.title}</b><div className="small muted">{c.detail}</div></div>)}
+            {list.length > 8 && <div className="item small muted">and {list.length - 8} more, all on the profile page</div>}
+          </details>
+        ))}
         <details>
           <summary>Units: what was converted<span className="count">{report.unit_reports.length}</span></summary>
           <div style={{ marginTop: 8 }}><UnitRows reports={report.unit_reports} /></div>
         </details>
-        {laterGroups.map(([g, list]) => (
-          <details key={g}>
-            <summary><SeverityChip severity={list.some((c) => c.severity === "error") ? "error" : list.some((c) => c.severity === "warning") ? "warning" : "info"} />{g}<span className="count">{list.length}</span></summary>
-            {list.map((c) => <div key={c.id} className="item"><b>{c.title}</b><div className="small muted">{c.detail}</div></div>)}
-          </details>
-        ))}
       </div>
     </div>
   );

@@ -3,6 +3,9 @@
 ## 2.0.0a2
 
 Web app
+- The review step leads with a one-line verdict, lists the fixes biggest first (severity, then
+  share of rows) with the five largest shown and the rest behind "show smaller ones", and
+  folds everything without a fix into groups with a preview of the variables.
 - "Apply and check again" and the final import reuse the checked import kept in memory, so
   they only apply the fixes instead of reading the source again. A table import can take a
   separate static table (path or upload) in the "what we found" step.

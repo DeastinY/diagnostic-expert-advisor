@@ -233,3 +233,11 @@ details summary { cursor: pointer; color: var(--ink-2); font-weight: 500; }
 .done-mark svg { width: 24px; height: 24px; stroke: var(--good); stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 30; stroke-dashoffset: 30; animation: draw .4s .25s ease-out forwards; }
 .tile b { animation: rise .4s cubic-bezier(.2,.8,.2,1) both; }
 @media (prefers-reduced-motion: reduce) { .rise, .wiz-steps li .n, .done-mark, .done-mark svg, .tile b, .busy-bar { animation: none !important; } .fix:hover, .drop.over { transform: none; } }
+
+.verdict { padding: 10px 14px; border-radius: 10px; font-weight: 600; font-size: 14px; border: 1px solid transparent; }
+.verdict.good { background: #e4f6e4; color: var(--good); }
+.verdict.danger { background: var(--danger-soft, #fde8e8); color: var(--danger, #b42318); }
+@media (prefers-color-scheme: dark) { .verdict.good { background: color-mix(in srgb, var(--good) 18%, var(--surface)); } }
+.fix .eff { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.fix .eff .fam { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.later summary .preview { font-size: 12px; margin-left: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 50%; }
