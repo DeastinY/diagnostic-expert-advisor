@@ -90,3 +90,13 @@ The advisor's only input type is `CohortProfile`. The payload consists of counts
 sampling statistics and per-column aggregates; categorical labels are included only for
 low-cardinality static columns where every shown category covers at least five
 encounters. The UI shows the exact payload before anything is sent.
+
+## Result cache
+
+Profiles, checks, site comparisons, suggestions and the overview, profile and trajectory
+charts are JSON; the web app stores each result under `derived/cache/<key>-<signature>-<params>.json`
+where the signature is the newest modification time of the cohort's files. A repeated request
+with the same filters and parameters is served from disk; any save (apply suggestions,
+processing change, site column) changes the signature, and stale entries are removed the next
+time a result is written. On a 2,000-encounter cohort this turns 3-5 s views into tens of
+milliseconds after the first load.

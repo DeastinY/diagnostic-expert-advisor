@@ -7,10 +7,14 @@ parameters (SQL over the feature table) and combined with AND.
 
 from __future__ import annotations
 
+import functools
+import hashlib
+import json
 import os
 import shutil
 import tempfile
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -50,8 +54,38 @@ class CohortStore:
             path / "cohort.yaml",
             path / "static.parquet",
             *(path / "dynamic").rglob("*.parquet"),
+            *(path / "events").rglob("*.parquet"),
+            *(path / "intervals").rglob("*.parquet"),
         ]
         return max((f.stat().st_mtime for f in files if f.exists()), default=0.0)
+
+    def result(
+        self, name: str, key: str, params: dict[str, Any], compute: Callable[[], Any]
+    ) -> Any:
+        """JSON result cache under ``derived/cache``: valid until the cohort's files change.
+
+        Entries are named ``<key>-<signature>-<params>.json``; entries from an older
+        signature are removed the next time a result is written.
+        """
+        path = self.path(name)
+        sig = hashlib.sha1(str(self._signature(path)).encode()).hexdigest()[:10]
+        pdig = hashlib.sha1(json.dumps(params, sort_keys=True, default=str).encode()).hexdigest()[
+            :12
+        ]
+        folder = path / "derived" / "cache"
+        file = folder / f"{key}-{sig}-{pdig}.json"
+        if file.exists():
+            try:
+                return json.loads(file.read_text(encoding="utf-8"))
+            except ValueError:
+                file.unlink(missing_ok=True)
+        value = compute()
+        folder.mkdir(parents=True, exist_ok=True)
+        for stale in folder.glob(f"{key}-*.json"):
+            if f"-{sig}-" not in stale.name:
+                stale.unlink(missing_ok=True)
+        file.write_text(json.dumps(value, default=str), encoding="utf-8")
+        return value
 
     def get(self, name: str) -> Cohort:
         path = self.path(name)
@@ -68,6 +102,19 @@ class CohortStore:
             self._cache.pop(name, None)
         else:
             self._cache.clear()
+
+
+def cached(store: CohortStore, key: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Serve an endpoint's JSON result from :meth:`CohortStore.result`."""
+
+    def decorate(fn: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(fn)
+        def wrapper(name: str, **kwargs: Any) -> Any:
+            return store.result(name, key, kwargs, lambda: fn(name, **kwargs))
+
+        return wrapper
+
+    return decorate
 
 
 def _filtered(cohort: Cohort, where: list[str] | None) -> Cohort:
@@ -377,6 +424,7 @@ def create_app(
 
     # ---- charts
     @app.get("/api/cohorts/{name}/charts/overview")
+    @cached(store, "overview")
     def charts_overview(
         name: str,
         where: Where = None,
@@ -460,6 +508,7 @@ def create_app(
         return out
 
     @app.get("/api/cohorts/{name}/charts/profile")
+    @cached(store, "charts_profile")
     def charts_profile(name: str, where: Where = None, dark: bool = False) -> dict[str, Any]:
         from dea import charts
 
@@ -478,6 +527,7 @@ def create_app(
         return out
 
     @app.get("/api/cohorts/{name}/charts/trajectory")
+    @cached(store, "trajectory")
     def chart_trajectory(
         name: str,
         variable: str,
@@ -613,10 +663,12 @@ def create_app(
 
     # ---- profile, suggestions, report
     @app.get("/api/cohorts/{name}/profile")
+    @cached(store, "profile")
     def profile(name: str, where: Where = None) -> dict[str, Any]:
         return profile_cohort(_filtered(store.get(name), where)).to_dict()
 
     @app.get("/api/cohorts/{name}/sites")
+    @cached(store, "sites")
     def sites(
         name: str, where: Where = None, column: str | None = None, dark: bool = False
     ) -> dict[str, Any]:
@@ -729,12 +781,14 @@ def create_app(
         return {"site_column": cohort.config.site_column}
 
     @app.get("/api/cohorts/{name}/checks")
+    @cached(store, "checks")
     def checks(name: str) -> list[dict[str, Any]]:
         from dea.quality import run_checks
 
         return [c.to_dict() for c in run_checks(store.get(name))]
 
     @app.get("/api/cohorts/{name}/suggestions")
+    @cached(store, "suggestions")
     def suggestions(name: str) -> list[dict[str, Any]]:
         from dea.suggest import suggest
 
