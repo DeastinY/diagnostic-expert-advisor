@@ -53,6 +53,9 @@ Fixes
   of `subject_id` and the alphabetically first variable.
 
 Project page
+- Redesigned: scroll progress and active nav, a playing import log in the hero, staggered
+  reveals, card tilt, a sliding tab indicator, a standards marquee, plainer copy throughout,
+  and a contact address in the workshops section and footer.
 - Pages deploys a placeholder (`docs/public`) until the page is finalized; the full landing
   page stays in `docs/` and goes live by pointing the workflow back at it.
 - Workshops & support section: regular workshops, personal demonstrations and setup help
