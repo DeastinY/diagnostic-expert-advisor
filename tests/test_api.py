@@ -203,3 +203,38 @@ def test_result_cache_invalidates_on_save(client: TestClient) -> None:
     client.get("/api/cohorts/unit/profile").json()
     names = [f.name for f in cache.glob("profile-*.json")]
     assert len(names) == 1 and names[0] not in {f.name for f in files}
+
+
+def test_token_auth(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path_factory.mktemp("auth")
+    generate_cohort(4, seed=1, max_hours=24).save(data / "c")
+    monkeypatch.setenv("DEA_TOKEN", "s3cret")
+    c = TestClient(create_app(data_dir=data, frontend_dir=data / "no-frontend"))
+    assert c.get("/api/health").json()["auth"] is True
+    assert c.get("/api/cohorts").status_code == 401
+    assert c.get("/api/cohorts", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert c.get("/api/cohorts", headers={"Authorization": "Bearer s3cret"}).status_code == 200
+    assert c.get("/api/cohorts?token=s3cret").status_code == 200
+
+
+def test_encounter_chart_band_and_report_sections(client: TestClient) -> None:
+    eid = client.get("/api/cohorts/unit/encounters").json()["rows"][0]["encounter_id"]
+    var = client.get("/api/cohorts/unit").json()["variables"][0]  # earlier tests may rename
+    spec = client.get(f"/api/cohorts/unit/encounters/{eid}/chart?variables={var}").json()["spec"]
+    panel = spec["vconcat"][-1]
+    assert any(layer.get("mark", {}).get("type") == "area" for layer in panel["layer"])  # band
+    spec = client.get(
+        f"/api/cohorts/unit/encounters/{eid}/chart?variables={var}&band=false"
+    ).json()["spec"]
+    assert not any(
+        layer.get("mark", {}).get("type") == "area" for layer in spec["vconcat"][-1]["layer"]
+    )
+    client.post("/api/cohorts/demo", json={"name": "multi2", "n": 18, "sites": 3})
+    client.post(
+        "/api/cohorts/multi2/derive", json={"name": "multi2_sub", "where": ["los_hours > 0"]}
+    )
+    html = client.get("/api/cohorts/multi2/report").text
+    assert "Across sites" in html and "Data quality checks" in html and "Sub-cohorts" in html
+    assert "multi2_sub" in html

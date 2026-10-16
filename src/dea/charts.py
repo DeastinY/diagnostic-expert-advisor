@@ -493,11 +493,15 @@ def small_multiples(
     row_height: int = 96,
     dark: bool = False,
     events: bool = True,
+    bands: dict[str, pl.DataFrame] | None = None,
 ):
     """Stacked panels per variable (independent y, shared x and crosshair) with an events rail.
 
     Different measurements never share one axis; the shared hover crosshair keeps them aligned
     in time, and string events (ventilation modes, notes) sit on a rail above the panels.
+    ``bands`` (variable -> :meth:`Cohort.trajectory` frame with ``hours, lo, median, hi``)
+    draws the cohort's interquartile band and median behind the patient's line, so a
+    clinician sees at once where this patient sits relative to everyone else.
     """
     t = theme(dark)
     labels, units = labels or {}, units or {}
@@ -594,6 +598,20 @@ def small_multiples(
                 axis=alt.Axis(tickCount=3),
             ),
         )
+        layers = []
+        band = (bands or {}).get(v)
+        if band is not None and band.height:
+            bdf = band.select("hours", "lo", "median", "hi").to_pandas()
+            layers.append(
+                alt.Chart(bdf)
+                .mark_area(color=t.muted, opacity=0.14, interpolate="monotone")
+                .encode(x="hours:Q", y="lo:Q", y2="hi:Q")
+            )
+            layers.append(
+                alt.Chart(bdf)
+                .mark_line(color=t.muted, strokeWidth=1, strokeDash=[4, 3], interpolate="monotone")
+                .encode(x="hours:Q", y="median:Q")
+            )
         sel = base.mark_point(opacity=0).encode(x="hours:Q", y="value:Q").add_params(nearest)
         pts = base.mark_point(
             color=t.accent, filled=True, size=55, stroke=t.surface, strokeWidth=2
@@ -610,7 +628,7 @@ def small_multiples(
             x="hours:Q", opacity=alt.condition(nearest, alt.value(0.6), alt.value(0))
         )
         panels.append(
-            alt.layer(line, sel, pts, rule).properties(
+            alt.layer(*layers, line, sel, pts, rule).properties(
                 height=row_height,
                 width="container",
                 title=alt.Title(
