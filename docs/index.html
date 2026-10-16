@@ -262,7 +262,7 @@
       </article>
       <article class="feature reveal" data-delay="2" data-tab="import">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><path d="M12 2l7 4v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z"/></svg></div>
-        <h3>Checks run on their own</h3><p>Every import and every cohort page runs the same checks: mixed units, values out of range (together with the unit that would explain them), duplicates, timestamps before admission, distributions with two clusters. Fixing them is one click and the fix is stored with the cohort.</p>
+        <h3>Checks run on their own</h3><p>Every import and every cohort page runs the same checks: mixed units, values out of range (together with the unit that would explain them), duplicates, numbers stored as text, timestamps before admission. The fixes DEA is sure about are ticked before the import, you can apply them and check again, and each one is stored with the cohort.</p>
         <span class="more">Show me <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       </article>
       <article class="feature reveal" data-delay="3" data-tab="patients">
@@ -298,7 +298,7 @@
     </div>
     <div class="explorer reveal">
       <div class="tabs" role="tablist">
-        <button class="tab" role="tab" aria-selected="true" data-tab="import"><span class="n">01</span><span><b>Import &amp; checks</b><span>Drop a folder, look at the findings, import</span></span></button>
+        <button class="tab" role="tab" aria-selected="true" data-tab="import"><span class="n">01</span><span><b>Import, review, fix</b><span>Drop a folder, tick the fixes, import</span></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="harmonize"><span class="n">02</span><span><b>Profile &amp; harmonize</b><span>Suggestions, applied with a click</span></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="sites"><span class="n">03</span><span><b>Hospitals</b><span>What differs between sites</span></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="patients"><span class="n">04</span><span><b>One patient</b><span>Compared to the cohort</span></span></button>
@@ -307,15 +307,15 @@
       <div class="panels">
         <div class="panel on" data-panel="import">
           <div class="detail">
-            <div class="shot"><img src="img/import.png" alt="Import preview listing unit conversions and findings" data-full="img/import.png" data-cap="The guided import at the checks step: converted units and findings, before anything is written."></div>
+            <div class="shot"><img src="img/import.png" alt="Import preview listing unit conversions and findings" data-full="img/import.png" data-cap="The guided import at the review step: counts, findings with their fixes ticked, and what was converted, before anything is written."></div>
             <div>
-              <h3>Drop a folder, look at the findings, then import.</h3>
-              <p class="ink2">Drop a MIMIC-IV download, FHIR resources or a table onto the page (or paste a path for a large folder that is already on the machine). The guided import shows what the DEA recognized, runs the checks without writing anything, and writes the cohort when you say so. The suggested harmonization can be applied in the same step.</p>
+              <h3>Drop a folder, tick the fixes, then import.</h3>
+              <p class="ink2">Drop a MIMIC-IV download, FHIR resources or a table onto the page (or paste a path for a large folder that is already on the machine). The guided import shows what the DEA recognized, runs the checks without writing anything, lists the fixes it can apply with the safe ones already ticked, and lets you check again before the cohort is written.</p>
               <ul>
                 <li>Layout, columns, time unit and units are detected; you can correct them if needed</li>
-                <li>Mixed units are converted per row, e.g. °F to °C, percent to fraction, mmol/L to mg/dL</li>
-                <li>Out-of-range values come with the unit that would explain them; distributions with two clusters are flagged as well</li>
-                <li>Duplicates, timestamps before admission, numbers stored as text, empty encounters</li>
+                <li>Mixed units are converted per row, e.g. °F to °C, mEq/L to mmol/L; rows in a unit that cannot be converted become their own variable</li>
+                <li>Out-of-range values come with the unit that would explain them, duplicates and numbers stored as text with a one-tick fix</li>
+                <li>"Apply and check again" shows what remains before anything is written</li>
                 <li>Every fix is written to <code>cohort.yaml</code>, so you can always see what was changed</li>
               </ul>
               <div class="cmd"><span class="c"># the same from the command line</span>

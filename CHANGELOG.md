@@ -3,6 +3,19 @@
 ## 2.0.0a2
 
 Web app
+- Review & fix step in the guided import: counts, a severity bar, the fixes DEA can apply
+  grouped with a checkbox each (recommended ones ticked), "apply and check again" to see what
+  remains before anything is written, the unit conversions in a table and the rest grouped
+  for later. Import applies the chosen fixes; the CLI does the same with `dea import --fix`.
+- Fixes for numbers stored as text (the leading number becomes an observation) and for rows
+  before admission; rarely recorded variables can be hidden in one go.
+
+Units
+- Rows in a unit that cannot be converted become their own `<variable> (<unit>)` variable
+  instead of staying mixed with converted rows; a variable whose rows all sit in a unit that
+  does not fit its dictionary match is left alone and not mapped (a drug level is not a dose).
+- `units` is no longer read as pH; mEq/L converts to mmol/L for sodium and potassium; "units"
+  on a per-hour heparin or insulin item is U/h; ug/mL, mg and U/h have aliases.
 - Guided import: drop a folder or a file anywhere on the cohorts page (a whole MIMIC-IV or
   FHIR download works), see what was recognized, run the checks, import, and optionally apply
   the suggested harmonization in one go. Folder uploads go in batches to `.uploads/` in the

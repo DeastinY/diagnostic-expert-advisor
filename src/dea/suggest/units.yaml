@@ -13,7 +13,12 @@ aliases:
   "L": [l, liter, litre]
   "mL/kg": ["ml/kg", "mL/kg"]
   "mL/cm[H2O]": ["ml/cmh2o", "mL/cmH2O"]
-  "[pH]": [ph, units, "[pH]"]
+  "[pH]": [ph, "[pH]"]
+  "U": [units, unit, u, iu, "[iU]", "int units", "international units"]
+  "U/h": ["u/h", "units/h", "units/hr", "units/hour", "unit/h", "iu/h"]
+  "meq/L": ["meq/l", "mEq/L", "meq", "meq/litre"]
+  "ug/mL": ["ug/ml", "mcg/ml", "µg/ml", "ug/mL"]
+  "mg": [mg, milligram, milligrams]
   "mmol/L": ["mmol/l", mmol/L, "mmol per l"]
   "mg/dL": ["mg/dl", mg/dL]
   "mg/L": ["mg/l", mg/L]
@@ -44,3 +49,9 @@ conversions:
   - { from: "umol/L", to: "mg/dL", factor: 0.0584795, concept: bilirubin }
   - { from: "mg/dL", to: "mmol/L", factor: 0.111, concept: lactate }
   - { from: "mmol/L", to: "mg/dL", factor: 9.009, concept: lactate }
+  # monovalent ions: 1 mEq = 1 mmol
+  - { from: "meq/L", to: "mmol/L", factor: 1, concept: sodium }
+  - { from: "meq/L", to: "mmol/L", factor: 1, concept: potassium }
+  # a dose charted as "units" for a per-hour item is the hourly rate
+  - { from: "U", to: "U/h", factor: 1, concept: heparin }
+  - { from: "U", to: "U/h", factor: 1, concept: insulin }

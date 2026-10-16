@@ -41,12 +41,32 @@ are listed for scripts.
 ## Your own data
 
 In the browser: drop your file or folder anywhere on the cohorts page, or click the drop zone
-to choose one. The guided import then goes through four steps: what was recognized (layout,
-columns, time unit, units; for a table you can correct the column mapping), the checks (run
-without writing anything), the import, and done. On the checks step you can tick "apply the
-suggested harmonization", which renames recognized variables to canonical names, moves
-constant attributes to the static table and adds tags right after the import. From there the
-overview, the distributions, the profile page and the patient pages are ready.
+to choose one. The guided import then goes through four steps:
+
+1. **What we found.** Layout, columns, time unit and units; for a table you can correct the
+   column mapping with a preview of the rows in front of you.
+2. **Review & fix.** The import runs without writing anything and you get the counts, the
+   findings and the unit conversions. Findings DEA can repair are listed under "Fix now" with
+   a checkbox each: duplicates, numbers stored as text and unit conversions it is sure about
+   are ticked already, dropping values or pre-admission rows is not. "Apply and check again"
+   runs the import once more with the ticked fixes and shows what remains, so you can see the
+   effect before anything is written. The rest is grouped under "for later" and waits on the
+   profile page.
+3. **Import.** Writes the cohort with the chosen fixes, each one recorded in `cohort.yaml`.
+   Optionally the suggested harmonization (canonical variable names, static attributes, tags,
+   processing defaults) is applied in the same go.
+4. **Done.** What was imported, what was fixed, and what is left to look at.
+
+A few things happen on their own at import, with no checkbox: units are converted per row to
+the concept's unit (°F to °C, mEq/L to mmol/L for sodium and potassium, "units" charted on a
+per-hour item to U/h); rows in a unit that cannot be converted become their own variable, for
+example `WBC (#/hpf)` next to `WBC`, so one variable never mixes units; and a variable whose
+rows all sit in a unit that does not fit its dictionary match (a vancomycin *level* in ug/mL
+under a drug concept in mg) is left as it is and not mapped.
+
+From the command line, `uv run dea import export.csv data/mine --fix recommended` applies the
+same recommended fixes, and `--fix duplicates,time:negative` a list of check ids from
+`uv run dea check`.
 
 Dropped folders are uploaded in batches into `.uploads/` inside the data directory and removed
 after the import. For a folder that is already on the machine and large (the full MIMIC-IV),

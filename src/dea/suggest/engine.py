@@ -309,11 +309,14 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
     plots: list[str] | None = None
     processing: dict[str, Any] | None = None
     fixes: list[dict[str, Any]] = []
-    dedupe = False
+    parse: list[str] = []
+    dedupe = drop_negative = False
     for s in suggestions:
         a = s.action or {}
         fixes += [a["fix"]] if "fix" in a else []
         dedupe = dedupe or bool(a.get("dedupe"))
+        drop_negative = drop_negative or a.get("drop_time") == "negative"
+        parse += [a["parse"]["variable"]] if "parse" in a else []
         renames.update(a.get("rename", {}))
         labels.update(a.get("label", {}))
         units.update({k: v for k, v in a.get("unit", {}).items() if v})
@@ -338,6 +341,10 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
         )
     if dedupe:
         out = out.dedupe()
+    if drop_negative:
+        out = out.drop_before_admission()
+    for v in parse:
+        out = out.parse_numeric_events(v)
     out = out.move_to_static([v for v in to_static if v in cohort.variables])
     out = out.rename_variables(renames)
     cfg = out.config

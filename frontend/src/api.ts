@@ -35,7 +35,7 @@ export interface Suggestion {
 }
 export interface Check {
   id: string; severity: "info" | "warning" | "error"; title: string; detail: string; variables: string[];
-  action: Record<string, unknown> | null; n: number;
+  action: Record<string, unknown> | null; n: number; recommended: boolean;
 }
 export interface SiteComparison {
   column: string | null; candidates: string[]; configured: string | null;
@@ -46,11 +46,12 @@ export interface SiteComparison {
   checks: Check[];
   charts: { distributions?: object | null; coverage?: object | null; sampling?: object | null; los?: object | null };
 }
-export interface UnitReport { variable: string; canonical: string; label: string; seen: Record<string, number>; converted: Record<string, number>; unconvertible: Record<string, number>; mixed: boolean }
+export interface UnitReport { variable: string; canonical: string; label: string; seen: Record<string, number>; converted: Record<string, number>; unconvertible: Record<string, number>; mixed: boolean; split: boolean; skipped: boolean }
 export interface ImportReport {
   source: string; format: string; n_encounters: number; n_variables: number; n_observations: number; n_events: number;
   mapping: Record<string, string>; event_columns: string[]; dropped_columns: string[]; warnings: string[];
-  unit_reports: UnitReport[]; checks: Check[];
+  unit_reports: UnitReport[]; checks: Check[]; applied: string[]; n_intervals?: number;
+  summary: { error: number; warning: number; info: number; fixable: number; recommended: number; units_converted: number; units_split: number; units_skipped: number };
 }
 export interface EncounterPage {
   rows: Record<string, unknown>[]; total: number; page: number; size: number; columns: string[]; tags: string[];
@@ -123,9 +124,9 @@ export const api = {
   demo: (body: { name: string; n: number; mimic: boolean; sites?: number }) =>
     request<{ name: string }>("/api/cohorts/demo", { method: "POST", body: JSON.stringify(body) }),
   detect: (path: string) => request<Detection>("/api/detect", { method: "POST", body: JSON.stringify({ path }) }),
-  import: (body: { path: string; name?: string; overrides: Record<string, unknown> }) =>
+  import: (body: { path: string; name?: string; overrides: Record<string, unknown>; fixes?: string[] }) =>
     request<{ name: string; report: ImportReport }>("/api/cohorts/import", { method: "POST", body: JSON.stringify(body) }),
-  preview: (body: { path: string; name?: string; overrides: Record<string, unknown> }) =>
+  preview: (body: { path: string; name?: string; overrides: Record<string, unknown>; fixes?: string[] }) =>
     request<{ name: string; report: ImportReport }>("/api/cohorts/preview", { method: "POST", body: JSON.stringify(body) }),
   checks: (name: string) => request<Check[]>(`/api/cohorts/${name}/checks`),
   sites: (name: string, where: Where, column?: string) =>

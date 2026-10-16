@@ -679,6 +679,49 @@ class Cohort:
             _full=self._full,
         )
 
+    def parse_numeric_events(self, variable: str) -> Cohort:
+        """Turn an event variable whose values are numbers with text glued on ("37.2 C",
+        "98 %") into observations; rows without a leading number stay events."""
+        hit = pl.col(VARIABLE) == variable
+        number = pl.col(VALUE).str.extract(r"^\s*([-+]?\d+(?:[.,]\d+)?)", 1)
+        parsed = number.str.replace(",", ".").cast(pl.Float64(), strict=False)
+        rows = self.events.filter(hit).with_columns(parsed.alias("_num"))
+        numeric = rows.filter(pl.col("_num").is_not_null()).select(
+            ENCOUNTER_ID, TIME, VARIABLE, pl.col("_num").alias(VALUE)
+        )
+        config = self.config.model_copy(deep=True)
+        config.value_fixes.append(
+            ValueFix(variable=variable, where="text", description="numbers parsed from text")
+        )
+        return Cohort(
+            self.static,
+            pl.concat([self.dynamic, numeric.select(list(LONG_SCHEMA))]),
+            events=pl.concat(
+                [self.events.filter(~hit), rows.filter(pl.col("_num").is_null()).drop("_num")]
+            ),
+            intervals=self.intervals,
+            config=config,
+            root=self.root,
+            _full=self._full,
+        )
+
+    def drop_before_admission(self) -> Cohort:
+        """Drop observations and events with a negative time offset."""
+        keep = pl.col(TIME) >= pl.duration(seconds=0)
+        config = self.config.model_copy(deep=True)
+        config.value_fixes.append(
+            ValueFix(variable="*", where="time < 0", description="rows before admission removed")
+        )
+        return Cohort(
+            self.static,
+            self.dynamic.filter(keep),
+            events=self.events.filter(keep),
+            intervals=self.intervals,
+            config=config,
+            root=self.root,
+            _full=self._full,
+        )
+
     def dedupe(self) -> Cohort:
         """Drop repeated (encounter, time, variable) observations, keeping the first."""
         config = self.config.model_copy(deep=True)

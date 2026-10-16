@@ -33,9 +33,17 @@ class Check:
     variables: list[str] = field(default_factory=list)
     action: dict[str, Any] | None = None
     n: int = 0
+    recommended: bool = False  # the action is safe to apply without looking: on by default
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def apply_checks(cohort: Cohort, checks: list[Check]) -> Cohort:
+    """Apply the actions of the given checks (same actions as suggestions)."""
+    from dea.suggest.engine import apply_suggestions
+
+    return apply_suggestions(cohort, [c for c in checks if c.action])  # type: ignore[arg-type]
 
 
 def _concepts(variables: list[str]) -> dict[str, Concept]:
@@ -52,36 +60,56 @@ def unit_checks(reports: list[UnitReport]) -> list[Check]:
     """Checks from the import-time unit normalization."""
     out = []
     for r in reports:
+        unit = r.label or r.canonical
+        if r.skipped:
+            out.append(
+                Check(
+                    id=f"units-skip:{r.variable}",
+                    severity="info",
+                    title=f"'{r.variable}' is not in the unit its dictionary match expects",
+                    detail=(
+                        "All rows are in "
+                        + ", ".join(f"{u!r}" for u in r.unconvertible)
+                        + f", which does not fit {unit}. It is probably a different measurement "
+                        "under that name (a drug level rather than a dose, urine rather than "
+                        "blood), so it was left as is and not mapped to the concept."
+                    ),
+                    variables=[r.variable],
+                    n=sum(r.unconvertible.values()),
+                )
+            )
+            continue
         if r.converted:
             total = sum(r.seen.values())
             n = sum(r.converted.values())
             out.append(
                 Check(
                     id=f"units:{r.variable}",
-                    severity="warning",
-                    title=f"'{r.variable}' was recorded in mixed units",
+                    severity="info",
+                    title=f"'{r.variable}' was recorded in mixed units, now {unit}",
                     detail=(
                         f"{n:,} of {total:,} rows ({n / total:.1%}) in "
                         + ", ".join(r.converted)
-                        + f" were converted to {r.label or r.canonical}; the stored values are "
-                        "uniform."
+                        + f" were converted to {unit}; the stored values are uniform."
                     ),
                     variables=[r.variable],
                     n=n,
                 )
             )
         if r.unconvertible:
+            names = ", ".join(f"'{r.split_name(r.variable, u)}'" for u in r.unconvertible)
             out.append(
                 Check(
-                    id=f"units-unknown:{r.variable}",
-                    severity="error",
-                    title=f"'{r.variable}' has rows in a unit DEA cannot convert",
+                    id=f"units-split:{r.variable}",
+                    severity="warning",
+                    title=f"'{r.variable}' has rows in a unit DEA cannot convert; split off",
                     detail=(
                         ", ".join(f"{n:,} rows in {u!r}" for u, n in r.unconvertible.items())
-                        + f" were kept unchanged next to values in {r.label or r.canonical}. Add a "
-                        "conversion to units.yaml or fix the source."
+                        + f" cannot be converted to {unit} and became {names}, so the "
+                        "values of one variable stay in one unit. Rename, drop or add a "
+                        "conversion to units.yaml if that is the same measurement."
                     ),
-                    variables=[r.variable],
+                    variables=[r.variable, *(r.split_name(r.variable, u) for u in r.unconvertible)],
                     n=sum(r.unconvertible.values()),
                 )
             )
@@ -162,6 +190,7 @@ def range_checks(cohort: Cohort, concepts: dict[str, Concept]) -> list[Check]:
                             }
                         },
                         n=int(n_out),
+                        recommended=True,
                     )
                 )
             else:
@@ -266,6 +295,7 @@ def structural_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
                 "value is kept when deduplicating.",
                 action={"dedupe": True},
                 n=int(dup),
+                recommended=True,
             )
         )
     if counts["negative"]:
@@ -275,7 +305,9 @@ def structural_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
                 severity="warning",
                 title=f"{counts['negative']:,} observation(s) before admission",
                 detail="Negative time offsets: records that pre-date the admission time (labs "
-                "drawn in the emergency department are the common, legitimate case).",
+                "drawn in the emergency department are the common, legitimate case). They can "
+                "be dropped if your question starts at admission.",
+                action={"drop_time": "negative"},
                 n=int(counts["negative"]),
             )
         )
@@ -348,8 +380,11 @@ def structural_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
                 id="coverage:low",
                 severity="info",
                 title=f"{len(low)} variable(s) present in fewer than 10% of encounters",
-                detail=", ".join(low[:15]) + (" …" if len(low) > 15 else ""),
+                detail=", ".join(low[:15])
+                + (" …" if len(low) > 15 else "")
+                + ". They can be hidden from features and charts (the data stays).",
                 variables=low,
+                action={"drop": low},
                 n=len(low),
             )
         )
@@ -372,10 +407,13 @@ def event_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
                     id=f"events-numeric:{e.name}",
                     severity="warning",
                     title=f"'{e.name}' holds numbers stored as text",
-                    detail="Most values look like '37.2 C' or '98'; they are kept as events and "
-                    "do not take part in aggregates. Clean the value column before import.",
+                    detail="Most values look like '37.2 C' or '98'; as events they do not take "
+                    "part in aggregates. The leading number can be parsed into an observation; "
+                    "rows without one stay events.",
                     variables=[e.name],
+                    action={"parse": {"variable": e.name}},
                     n=e.n_observations,
+                    recommended=True,
                 )
             )
     return out
@@ -405,4 +443,4 @@ def run_checks(
     return sorted(out, key=lambda c: (order[c.severity], -c.n))
 
 
-__all__ = ["Check", "run_checks", "unit_checks", "range_checks", "cluster_checks"]
+__all__ = ["Check", "apply_checks", "run_checks", "unit_checks", "range_checks", "cluster_checks"]

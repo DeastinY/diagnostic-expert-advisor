@@ -184,3 +184,52 @@ details summary { cursor: pointer; color: var(--ink-2); font-weight: 500; }
 .progress > div { height: 100%; background: var(--accent); transition: width .2s; }
 .droppable { position: relative; min-height: 60vh; }
 .drop-veil { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 70%, transparent); border: 4px dashed var(--accent); pointer-events: none; }
+
+/* import review */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.tile { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); }
+.tile b { display: block; font-size: 20px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.1; }
+.tile span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.sevbar { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--ink-2); }
+.sevbar .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.sevbar .dot.error { background: var(--danger, #b42318); } .sevbar .dot.warning { background: var(--warn); } .sevbar .dot.info { background: var(--accent); }
+.fixes { display: grid; gap: 4px; }
+.fix { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: start; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); }
+.fix.on { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent-soft) 35%, var(--surface)); }
+.fix input { margin-top: 3px; }
+.fix .t { font-weight: 600; }
+.fix .d { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.fix .eff { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.fixgroup { margin-top: 6px; }
+.fixgroup h4 { margin: 10px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+.later details { border-top: 1px solid var(--border); padding: 6px 0; }
+.later details:first-child { border-top: 0; }
+.later summary { display: flex; gap: 8px; align-items: center; font-size: 13.5px; }
+.later summary .count { margin-left: auto; color: var(--muted); font-size: 12px; }
+.later .item { padding: 6px 0 6px 10px; border-left: 2px solid var(--border); margin: 6px 0 0 4px; }
+.later .item b { font-weight: 600; }
+.unitrows { font-size: 13px; }
+.unitrows tr > td { padding: 4px 8px 4px 0; vertical-align: top; border-top: 1px solid var(--border); }
+.applied { padding: 8px 12px; border-radius: 10px; background: #e4f6e4; color: var(--good); font-size: 13px; }
+@media (prefers-color-scheme: dark) { .applied { background: color-mix(in srgb, var(--good) 18%, var(--surface)); } }
+
+/* motion */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes pop { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); } }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.rise { animation: rise .32s cubic-bezier(.2,.8,.2,1) both; }
+.rise.d1 { animation-delay: .05s; } .rise.d2 { animation-delay: .1s; } .rise.d3 { animation-delay: .15s; } .rise.d4 { animation-delay: .2s; } .rise.d5 { animation-delay: .25s; }
+.wiz-steps li.done .n { animation: pop .35s cubic-bezier(.2,.8,.2,1) both; }
+.wiz-steps li.on .n { animation: pop .3s cubic-bezier(.2,.8,.2,1) both; }
+.wiz-steps li { transition: background .2s, color .2s, border-color .2s; }
+.fix { transition: border-color .18s, background .18s, transform .18s; }
+.fix:hover { transform: translateY(-1px); }
+.drop { transition: border-color .18s, background .18s, transform .18s; }
+.drop.over { transform: scale(1.01); }
+.progress > div { transition: width .25s ease-out; }
+.busy-bar { height: 3px; border-radius: 2px; background: linear-gradient(90deg, var(--border) 0%, var(--accent) 50%, var(--border) 100%); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+.done-mark { width: 44px; height: 44px; border-radius: 50%; background: #e4f6e4; display: inline-flex; align-items: center; justify-content: center; animation: pop .45s cubic-bezier(.2,.8,.2,1) both; }
+.done-mark svg { width: 24px; height: 24px; stroke: var(--good); stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 30; stroke-dashoffset: 30; animation: draw .4s .25s ease-out forwards; }
+.tile b { animation: rise .4s cubic-bezier(.2,.8,.2,1) both; }
+@media (prefers-reduced-motion: reduce) { .rise, .wiz-steps li .n, .done-mark, .done-mark svg, .tile b, .busy-bar { animation: none !important; } .fix:hover, .drop.over { transform: none; } }

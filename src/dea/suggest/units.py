@@ -44,11 +44,17 @@ class UnitReport:
     label: str = ""  # display unit of the concept, when known
     seen: dict[str, int] = field(default_factory=dict)  # UCUM (or raw) unit -> rows
     converted: dict[str, int] = field(default_factory=dict)  # from unit -> rows converted
-    unconvertible: dict[str, int] = field(default_factory=dict)  # unit -> rows left as they are
+    unconvertible: dict[str, int] = field(default_factory=dict)  # unit -> rows split off
+    split: bool = False  # unconvertible rows became their own "<variable> (<unit>)" variable
+    skipped: bool = False  # no row fits the concept's unit: variable left alone, not mapped
 
     @property
     def mixed(self) -> bool:
         return len(self.seen) > 1
+
+    @staticmethod
+    def split_name(variable: str, unit: str) -> str:
+        return f"{variable} ({unit})"
 
     def message(self) -> str | None:
         parts = []
@@ -56,10 +62,19 @@ class UnitReport:
             parts.append(
                 "converted " + ", ".join(f"{n} rows from {u}" for u, n in self.converted.items())
             )
-        if self.unconvertible:
+        if self.skipped:
             parts.append(
-                "no conversion for "
+                "left as is, "
                 + ", ".join(f"{n} rows in {u!r}" for u, n in self.unconvertible.items())
+                + " do not fit the concept"
+            )
+        elif self.unconvertible:
+            parts.append(
+                "split off "
+                + ", ".join(
+                    f"{n} rows in {u!r} as '{self.split_name(self.variable, u)}'"
+                    for u, n in self.unconvertible.items()
+                )
             )
         if not parts:
             return None
@@ -129,10 +144,14 @@ def normalize_units(
 ) -> tuple[pl.LazyFrame, list[UnitReport]]:
     """Convert values of the variables in ``targets`` to their canonical UCUM unit.
 
-    ``targets`` maps a variable name to ``(canonical_ucum, concept_name)``. Rows in a unit
-    without a known conversion keep their value (the report counts them). The returned frame
+    ``targets`` maps a variable name to ``(canonical_ucum, concept_name)``. The returned frame
     has ``unit_col`` replaced by the UCUM code of the unit each row is now in. One streaming
     pass counts the (variable, unit) pairs; the conversion itself stays lazy.
+
+    Two things never happen: a variable is not forced into a concept's unit when none of its
+    rows fit that unit (a vancomycin *level* in ug/mL is not the vancomycin *dose* in mg; the
+    report marks it ``skipped``), and rows in a unit without a conversion are not left mixed
+    with converted ones: they become their own ``<variable> (<unit>)`` variable (``split``).
     """
     table = load_units()
     lf = lf.with_columns(table.ucum_expr(unit_col))
@@ -156,8 +175,15 @@ def normalize_units(
             rep.unconvertible[unit] = int(n)
             continue
         rep.converted[unit] = int(n)
-    value_expr, unit_expr = pl.col(value_col), pl.col(unit_col)
     for rep in reports.values():
+        fits = sum(n for u, n in rep.seen.items() if u not in rep.unconvertible)
+        if rep.unconvertible and fits == 0:
+            rep.skipped = True  # a different measurement under a dictionary name
+            rep.converted = {}
+    value_expr, unit_expr, var_expr = pl.col(value_col), pl.col(unit_col), pl.col(variable_col)
+    for rep in reports.values():
+        if rep.skipped:
+            continue
         for unit in rep.converted:
             conv = table.conversion(unit, rep.canonical, targets[rep.variable][1])
             assert conv is not None
@@ -168,7 +194,15 @@ def normalize_units(
                 .otherwise(value_expr)
             )
             unit_expr = pl.when(hit).then(pl.lit(rep.canonical)).otherwise(unit_expr)
-    lf = lf.with_columns(value_expr.alias(value_col), unit_expr.alias(unit_col))
+        for unit in rep.unconvertible:
+            hit = (pl.col(variable_col) == rep.variable) & (pl.col(unit_col) == unit)
+            var_expr = (
+                pl.when(hit).then(pl.lit(rep.split_name(rep.variable, unit))).otherwise(var_expr)
+            )
+            rep.split = True
+    lf = lf.with_columns(
+        value_expr.alias(value_col), unit_expr.alias(unit_col), var_expr.alias(variable_col)
+    )
     return lf, [r for r in reports.values() if r.mixed or r.converted or r.unconvertible]
 
 

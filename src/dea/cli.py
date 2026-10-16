@@ -57,7 +57,12 @@ def _cmd_import(args: argparse.Namespace) -> int:
         )
         if getattr(args, k, None)
     }
-    cohort, report = import_path(args.source, name=args.name, static_path=args.static, **overrides)
+    fixes = None
+    if args.fix:
+        fixes = "recommended" if args.fix == "recommended" else args.fix.split(",")
+    cohort, report = import_path(
+        args.source, name=args.name, static_path=args.static, fixes=fixes, **overrides
+    )
     if args.mapping:
         from dea.standards.mapping import apply_mapping, load_mapping, load_units, mapping_report
 
@@ -422,6 +427,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--variable-col")
     p.add_argument("--value-col")
     p.add_argument("--unit-col", help="per-row unit column of a long table")
+    p.add_argument(
+        "--fix",
+        help="apply check fixes before writing: 'recommended' (dedupe, unit conversions, "
+        "numbers in text) or a comma-separated list of check ids from `dea check`",
+    )
     p.add_argument(
         "--mapping", help="site mapping YAML (local names -> concepts), applied on import"
     )

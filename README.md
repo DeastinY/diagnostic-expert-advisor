@@ -14,9 +14,10 @@ command line and in Python.
 
 - **Import through the UI.** CSV and Parquet tables (long or wide), MIMIC-IV folders, FHIR R4
   bundles and the v1 CSV tree are recognized, including which column is what and the units.
-- **Checks run on their own.** Mixed units, values out of range, duplicates, timestamps before
-  admission and differences between hospitals are reported before anything is written. Fixes
-  are one click and stored with the cohort.
+- **Checks run on their own.** Mixed units, values out of range, duplicates, numbers stored as
+  text, timestamps before admission and differences between hospitals are reported before
+  anything is written. The fixes DEA is sure about are ticked, you can apply them and check
+  again, and every fix is stored with the cohort.
 - **Plots without plotting.** Cohort overview, per-hospital comparison, one page per patient
   with the cohort median and IQR behind each signal, data-quality profile, HTML report.
 - **Harmonization.** Variables get LOINC and UCUM codes, diagnoses are grouped across ICD-9 and
@@ -72,8 +73,8 @@ uv run dea serve --data-dir data      # http://127.0.0.1:8000
 
 Drop a folder or a file anywhere on the page (a MIMIC-IV download, FHIR resources, a CSV or
 Parquet table, a zip) and the guided import takes over: it shows what was recognized, runs the
-checks without writing anything, imports on your go, and can apply the suggested harmonization
-in the same step. Afterwards the overview, the distributions and the patient pages are ready.
+checks without writing anything, lets you tick the fixes and check again, imports on your go,
+and can apply the suggested harmonization in the same step. Afterwards the overview, the distributions and the patient pages are ready.
 Large folders that are already on the machine can be pasted as a path instead of uploading
 them. The *Demo* tab generates a synthetic cohort over three hospitals if you have no data at
 hand.

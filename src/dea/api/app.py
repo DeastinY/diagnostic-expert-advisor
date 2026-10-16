@@ -160,6 +160,7 @@ class ImportIn(BaseModel):
     path: str
     name: str | None = None
     overrides: dict[str, Any] = Field(default_factory=dict)
+    fixes: list[str] = Field(default_factory=list)  # check ids whose fix is applied at import
 
 
 class DemoIn(BaseModel):
@@ -343,7 +344,9 @@ def create_app(
         if not p.exists():
             raise HTTPException(404, f"{p} does not exist")
         try:
-            return import_path(p, name=body.name or p.stem, **body.overrides)
+            return import_path(
+                p, name=body.name or p.stem, fixes=body.fixes or None, **body.overrides
+            )
         except Exception as exc:  # import errors are user errors (bad mapping, bad file)
             raise HTTPException(400, str(exc)) from exc
 

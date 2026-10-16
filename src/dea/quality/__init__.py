@@ -1,6 +1,6 @@
 """Data quality checks that run at import time, on demand, and across sites."""
 
-from dea.quality.checks import Check, run_checks
+from dea.quality.checks import Check, apply_checks, run_checks
 from dea.quality.sites import (
     detect_site_column,
     site_bins,
@@ -10,6 +10,7 @@ from dea.quality.sites import (
 )
 
 __all__ = [
+    "apply_checks",
     "Check",
     "detect_site_column",
     "run_checks",

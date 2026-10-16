@@ -81,12 +81,24 @@ class ImportReport:
     warnings: list[str] = field(default_factory=list)
     unit_reports: list[Any] = field(default_factory=list)  # dea.suggest.units.UnitReport
     checks: list[Any] = field(default_factory=list)  # dea.quality.Check
+    applied: list[str] = field(default_factory=list)  # ids of the checks whose fix was applied
 
     def to_dict(self) -> dict[str, Any]:
+        by = {"error": 0, "warning": 0, "info": 0}
+        for c in self.checks:
+            by[c.severity] = by.get(c.severity, 0) + 1
         return {
             **{k: v for k, v in self.__dict__.items() if k not in ("unit_reports", "checks")},
             "unit_reports": [r.to_dict() for r in self.unit_reports],
             "checks": [c.to_dict() for c in self.checks],
+            "summary": {
+                **by,
+                "fixable": sum(1 for c in self.checks if c.action),
+                "recommended": sum(1 for c in self.checks if c.action and c.recommended),
+                "units_converted": sum(1 for r in self.unit_reports if r.converted),
+                "units_split": sum(1 for r in self.unit_reports if r.split),
+                "units_skipped": sum(1 for r in self.unit_reports if r.skipped),
+            },
         }
 
     def save(self, cohort_dir: Path | str) -> Path:
@@ -122,6 +134,8 @@ class ImportReport:
             lines.append("dropped columns: " + ", ".join(self.dropped_columns))
         lines.extend(f"warning: {w}" for w in self.warnings)
         lines.extend(f"units: {m}" for r in self.unit_reports if (m := r.message()))
+        if self.applied:
+            lines.append("fixes applied: " + ", ".join(self.applied))
         lines.extend(f"check [{c.severity}]: {c.title}" for c in self.checks)
         return lines
 
@@ -610,6 +624,9 @@ def harmonize_units(
     dynamic, report.unit_reports = normalize_units(dynamic, unit_col, targets, value_col=value_col)
     for rep in report.unit_reports:
         rep.label = d.by_name[targets[rep.variable][1]].unit
+        if rep.skipped:  # not this concept after all: no canonical unit, no code
+            targets.pop(rep.variable, None)
+            codes.pop(rep.variable, None)
     majority = (
         collect(
             dynamic.filter(pl.col(unit_col).is_not_null() & (pl.col(unit_col) != ""))
@@ -690,18 +707,35 @@ def import_path(
     detection: Detection | None = None,
     static_path: Path | str | None = None,
     checks: bool = True,
+    fixes: list[str] | str | None = None,
     **overrides: Any,
 ) -> tuple[Cohort, ImportReport]:
     """Detect and import ``path``. Keyword overrides replace fields of the detection.
 
     With ``checks`` (the default) the data quality checks run on the imported cohort and
-    land in ``report.checks`` before anything is written.
+    land in ``report.checks`` before anything is written. ``fixes`` applies the actions of
+    the named checks (a list of check ids, or ``"recommended"`` for every fix DEA marks as
+    safe) before the cohort is returned; the checks then run again and ``report.checks``
+    holds what is left, ``report.applied`` what was done.
     """
     cohort, report = _import_path(path, name, detection, static_path, **overrides)
     if checks and report.format != "dea":
         from dea.quality import run_checks
 
         report.checks = run_checks(cohort, unit_reports=report.unit_reports)
+        if fixes:
+            from dea.quality.checks import apply_checks
+
+            if fixes == "recommended":
+                chosen = [c for c in report.checks if c.action and c.recommended]
+            else:
+                wanted = set(fixes)
+                chosen = [c for c in report.checks if c.action and c.id in wanted]
+            if chosen:
+                cohort = apply_checks(cohort, chosen)
+                report.applied = [c.id for c in chosen]
+                report.checks = run_checks(cohort, unit_reports=report.unit_reports)
+                report.n_observations = cohort.summary().n_observations
     return cohort, report
 
 

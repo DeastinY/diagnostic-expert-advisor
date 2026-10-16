@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
-import { api, type Detection, type ImportReport } from "../api";
-import { Alert, ChecksList, Spinner, toast } from "./ui";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { api, type Check, type Detection, type ImportReport, type UnitReport } from "../api";
+import { Alert, SeverityChip, Spinner, toast } from "./ui";
 
 /** A file picked from a drop or a folder chooser, with its path relative to what was dropped. */
 export interface Picked { file: File; path: string }
@@ -39,6 +39,7 @@ function fromInput(files: FileList): Picked[] {
 }
 
 const mb = (n: number) => `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`;
+const num = (n: number) => n.toLocaleString();
 
 const FORMAT_TEXT: Record<string, [string, string]> = {
   mimic: ["MIMIC-IV folder", "One encounter per ICU stay. Chart, lab, input, procedure and output events, diagnoses and notes are read; units are converted per row, and ICD-9 and ICD-10 diagnoses become dx_ columns."],
@@ -49,7 +50,7 @@ const FORMAT_TEXT: Record<string, [string, string]> = {
   unknown: ["Not recognized", "DEA could not tell what this is. Have a look at the notes; a single table, a MIMIC-IV folder or FHIR resources work."],
 };
 
-const STEPS = ["Add data", "What we found", "Checks", "Done"];
+const STEPS = ["Add data", "What we found", "Review & fix", "Done"];
 
 function Steps({ at }: { at: number }) {
   return (
@@ -59,38 +60,128 @@ function Steps({ at }: { at: number }) {
   );
 }
 
-function ImportPreview({ report }: { report: ImportReport }) {
+// ---------------------------------------------------------------- review step
+
+/** Where a check comes from, by its id prefix: used to group the list. */
+function family(id: string): string {
+  if (id.startsWith("units")) return "Units";
+  if (id.startsWith("range")) return "Values out of range";
+  if (id.startsWith("cluster")) return "Two value clusters";
+  if (id === "duplicates") return "Duplicates";
+  if (id.startsWith("time")) return "Timing";
+  if (id.startsWith("events-numeric")) return "Numbers stored as text";
+  if (id.startsWith("coverage")) return "Rarely recorded variables";
+  if (id.startsWith("encounters")) return "Encounters";
+  if (id.startsWith("static")) return "Static table";
+  if (id.startsWith("site")) return "Differences between sites";
+  return "Other";
+}
+
+/** One line on what applying a check's fix does. */
+function effect(c: Check): string {
+  const a = c.action ?? {};
+  if ("dedupe" in a) return `removes ${num(c.n)} rows`;
+  if ("drop_time" in a) return `drops ${num(c.n)} rows`;
+  if ("parse" in a) return `parses ${num(c.n)} values`;
+  if ("drop" in a) return `hides ${num((a.drop as string[]).length)} variables`;
+  if ("filter" in a) return "adds a filter";
+  if ("fix" in a) return (a.fix as { expr: string | null }).expr ? `converts ${num(c.n)} values` : `drops ${num(c.n)} values`;
+  return "";
+}
+
+function Tiles({ r }: { r: ImportReport }) {
+  const items: [number, string][] = [[r.n_encounters, "encounters"], [r.n_variables, "variables"], [r.n_observations, "observations"]];
+  if (r.n_events) items.push([r.n_events, "events"]);
+  if (r.n_intervals) items.push([r.n_intervals, "intervals"]);
+  return <div className="tiles">{items.map(([v, l], i) => <div key={l} className={`tile rise d${i + 1}`}><b>{num(v)}</b><span>{l}</span></div>)}</div>;
+}
+
+function UnitRows({ reports }: { reports: UnitReport[] }) {
+  if (!reports.length) return <p className="small muted">Every variable arrived in one unit DEA knows.</p>;
+  return (
+    <table className="unitrows"><tbody>
+      {reports.map((u) => (
+        <tr key={u.variable}>
+          <td><b>{u.variable}</b></td>
+          <td>
+            {u.skipped ? <span className="muted">left as is, {Object.keys(u.unconvertible).join(", ")} does not fit {u.label || u.canonical}</span> : <>→ {u.label || u.canonical}</>}
+            {Object.entries(u.converted).map(([k, n]) => <span key={k} className="muted"> · {num(n)} rows from {k}</span>)}
+            {!u.skipped && Object.entries(u.unconvertible).map(([k, n]) => <span key={k} className="muted"> · {num(n)} rows in {k} split off as “{u.variable} ({k})”</span>)}
+          </td>
+        </tr>
+      ))}
+    </tbody></table>
+  );
+}
+
+function Review({ report, selected, onToggle, busy }: { report: ImportReport; selected: Set<string>; onToggle: (id: string, on: boolean) => void; busy: boolean }) {
+  const fixable = report.checks.filter((c) => c.action);
+  const later = report.checks.filter((c) => !c.action && !c.id.startsWith("units:")); // converted units are in the table below
+  const s = report.summary;
+  const groups = useMemo(() => {
+    const m = new Map<string, Check[]>();
+    for (const c of fixable) m.set(family(c.id), [...(m.get(family(c.id)) ?? []), c]);
+    return [...m.entries()];
+  }, [fixable]);
+  const laterGroups = useMemo(() => {
+    const m = new Map<string, Check[]>();
+    for (const c of later) m.set(family(c.id), [...(m.get(family(c.id)) ?? []), c]);
+    return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
+  }, [later]);
   return (
     <div className="stack">
-      <div className="row">
-        <span className="chip on">{report.format}</span>
-        <span className="chip">{report.n_encounters} encounters</span>
-        <span className="chip">{report.n_variables} variables</span>
-        <span className="chip">{report.n_observations.toLocaleString()} observations</span>
-        {report.n_events > 0 && <span className="chip">{report.n_events.toLocaleString()} events</span>}
+      <Tiles r={report} />
+      <div className="sevbar rise d2">
+        <span><i className="dot error" />{s.error} error{s.error === 1 ? "" : "s"}</span>
+        <span><i className="dot warning" />{s.warning} warning{s.warning === 1 ? "" : "s"}</span>
+        <span><i className="dot info" />{s.info} info</span>
+        <span className="muted">·</span>
+        <span>{s.units_converted} variable{s.units_converted === 1 ? "" : "s"} with converted units{s.units_split ? `, ${s.units_split} split` : ""}{s.units_skipped ? `, ${s.units_skipped} left as is` : ""}</span>
       </div>
+      {report.applied.length > 0 && <div className="applied rise">✓ {report.applied.length} fix{report.applied.length === 1 ? "" : "es"} applied. What is listed below is what remains.</div>}
       {report.warnings.map((w) => <Alert key={w}>{w}</Alert>)}
-      {report.unit_reports.length > 0 && (
-        <div>
-          <b className="small">Units harmonized</b>
-          <ul className="small muted" style={{ margin: "4px 0 0 16px" }}>
-            {report.unit_reports.map((u) => (
-              <li key={u.variable}>
-                <b>{u.variable}</b> → {u.label || u.canonical}
-                {Object.entries(u.converted).map(([k, n]) => ` · ${n.toLocaleString()} rows from ${k}`)}
-                {Object.entries(u.unconvertible).map(([k, n]) => ` · ${n.toLocaleString()} rows in ${k} not convertible`)}
-              </li>
-            ))}
-          </ul>
+
+      <div className="rise d3">
+        <div className="row spread">
+          <b>Fix now{fixable.length ? ` (${selected.size} of ${fixable.length} selected)` : ""}</b>
+          {fixable.length > 0 && <span className="small muted">Recommended ones are ticked. Everything is recorded in cohort.yaml.</span>}
         </div>
-      )}
-      <div>
-        <b className="small">Checks</b>
-        <ChecksList checks={report.checks} empty="No findings. Nothing in the data stood out." />
+        {fixable.length === 0 ? <p className="small muted">Nothing left that DEA can fix on its own.</p> : groups.map(([g, list]) => (
+          <div key={g} className="fixgroup">
+            <h4>{g}</h4>
+            <div className="fixes">
+              {list.map((c) => (
+                <label key={c.id} className={`fix${selected.has(c.id) ? " on" : ""}`}>
+                  <input type="checkbox" checked={selected.has(c.id)} disabled={busy} onChange={(e) => onToggle(c.id, e.target.checked)} />
+                  <div>
+                    <div className="t"><SeverityChip severity={c.severity} /> {c.title}</div>
+                    <div className="d">{c.detail}</div>
+                  </div>
+                  <span className="eff">{effect(c)}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="later rise d4">
+        <details>
+          <summary>Units: what was converted<span className="count">{report.unit_reports.length}</span></summary>
+          <div style={{ marginTop: 8 }}><UnitRows reports={report.unit_reports} /></div>
+        </details>
+        {laterGroups.map(([g, list]) => (
+          <details key={g}>
+            <summary><SeverityChip severity={list.some((c) => c.severity === "error") ? "error" : list.some((c) => c.severity === "warning") ? "warning" : "info"} />{g}<span className="count">{list.length}</span></summary>
+            {list.map((c) => <div key={c.id} className="item"><b>{c.title}</b><div className="small muted">{c.detail}</div></div>)}
+          </details>
+        ))}
       </div>
     </div>
   );
 }
+
+// ---------------------------------------------------------------- wizard
 
 export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: string, where: "overview" | "profile") => void; onMore?: () => void; dropped?: Picked[] | null }) {
   const [step, setStep] = useState(0);
@@ -104,6 +195,7 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
   const [prog, setProg] = useState<{ files: number; of: number; bytes: number; ofBytes: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportReport | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [harmonize, setHarmonize] = useState(true);
   const [result, setResult] = useState<{ name: string; report: ImportReport; applied: number } | null>(null);
   const [over, setOver] = useState(false);
@@ -169,30 +261,41 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
     </label>
   );
 
-  const runChecks = async () => {
-    setBusy("Running the checks…"); setErr(null);
-    try { setPreview((await api.preview({ path: staged!, name, overrides: ov })).report); setStep(2); }
-    catch (e) { fail(e); } finally { setBusy(null); }
+  /** Run the import without writing, with the fixes applied so far plus the selection. */
+  const check = async (fixes: string[], label: string) => {
+    setBusy(label); setErr(null);
+    try {
+      const rep = (await api.preview({ path: staged!, name, overrides: ov, fixes })).report;
+      const known = new Set((preview?.checks ?? []).map((c) => c.id));
+      setPreview(rep);
+      // keep the user's choices for findings that were already listed, tick the recommended among new ones
+      setSelected((prev) => new Set(rep.checks.filter((c) => c.action && (known.has(c.id) ? prev.has(c.id) : c.recommended)).map((c) => c.id)));
+      setStep(2);
+    } catch (e) { fail(e); } finally { setBusy(null); }
   };
+  const runChecks = () => check([], "Running the checks…");
+  const applied = preview?.applied ?? [];
+  const toApply = [...applied, ...selected];
+  const recheck = () => check(toApply, `Applying ${selected.size} fix${selected.size === 1 ? "" : "es"} and checking again…`);
 
   const doImport = async () => {
-    setBusy("Writing the cohort…"); setErr(null);
+    setBusy(toApply.length ? `Applying ${toApply.length} fix${toApply.length === 1 ? "" : "es"} and writing the cohort…` : "Writing the cohort…"); setErr(null);
     try {
-      const r = await api.import({ path: staged!, name, overrides: ov });
-      let applied = 0;
+      const r = await api.import({ path: staged!, name, overrides: ov, fixes: toApply });
+      let sugg = 0;
       if (harmonize) {
-        setBusy("Applying the suggestions…");
+        setBusy("Applying the suggested harmonization…");
         const safe = new Set(["harmonize", "static", "processing", "tag", "plot"]);
         const ids = (await api.suggestions(r.name)).filter((s) => s.applicable && safe.has(s.kind)).map((s) => s.id);
-        if (ids.length) { await api.applySuggestions(r.name, ids); applied = ids.length; }
+        if (ids.length) { await api.applySuggestions(r.name, ids); sugg = ids.length; }
       }
-      setResult({ name: r.name, report: r.report, applied });
+      setResult({ name: r.name, report: r.report, applied: sugg });
       setStep(3);
       toast(`Imported ${r.report.n_encounters} encounters`);
     } catch (e) { fail(e); } finally { setBusy(null); }
   };
 
-  const reset = () => { setStep(0); setDet(null); setStaged(null); setPreview(null); setResult(null); setOv({}); setErr(null); };
+  const reset = () => { setStep(0); setDet(null); setStaged(null); setPreview(null); setResult(null); setOv({}); setErr(null); setSelected(new Set()); };
   const [fmtTitle, fmtText] = FORMAT_TEXT[det?.format ?? "unknown"] ?? FORMAT_TEXT.unknown;
 
   return (
@@ -201,7 +304,7 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
       {err && <Alert kind="danger">{err}</Alert>}
 
       {step === 0 && (
-        <div className="stack">
+        <div className="stack rise" key="s0">
           <div
             className={`drop${over ? " over" : ""}${busy ? " busy" : ""}`}
             onDragOver={(e) => { e.preventDefault(); setOver(true); }}
@@ -247,7 +350,7 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
       )}
 
       {step === 1 && det && (
-        <div className="stack">
+        <div className="stack rise" key="s1">
           <div>
             <div className="row">
               <span className="chip on">{fmtTitle}{det.table_kind ? ` / ${kind}` : ""}</span>
@@ -285,7 +388,7 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
             </>
           )}
           <label className="field">Cohort name<input value={name} onChange={(e) => setName(e.target.value.replace(/[^\w.-]+/g, "_"))} /></label>
-          {busy && <Spinner label={busy} />}
+          {busy && <div className="stack" style={{ gap: 6 }}><Spinner label={busy} /><div className="busy-bar" /></div>}
           <div className="row spread">
             <button className="ghost" onClick={reset} disabled={!!busy}>← Start over</button>
             <button className="primary" disabled={!name || det.format === "unknown" || !!busy} onClick={runChecks}>Run the checks →</button>
@@ -294,31 +397,39 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
       )}
 
       {step === 2 && preview && (
-        <div className="stack">
-          <ImportPreview report={preview} />
-          <p className="small muted">Nothing has been written yet. Fixes for the findings are offered on the profile page after the import.</p>
-          <label className="row"><input type="checkbox" checked={harmonize} onChange={(e) => setHarmonize(e.target.checked)} /> Apply the suggested harmonization right away (canonical variable names, static attributes, tags, processing defaults)</label>
-          {busy && <Spinner label={busy} />}
+        <div className="stack rise" key="s2">
+          <Review report={preview} selected={selected} busy={!!busy} onToggle={(id, on) => setSelected((prev) => { const n = new Set(prev); if (on) n.add(id); else n.delete(id); return n; })} />
+          <label className="row"><input type="checkbox" checked={harmonize} onChange={(e) => setHarmonize(e.target.checked)} /> After the import, also apply the suggested harmonization (canonical variable names, static attributes, tags, processing defaults)</label>
+          {busy && <div className="stack" style={{ gap: 6 }}><Spinner label={busy} /><div className="busy-bar" /></div>}
           <div className="row spread">
             <button className="ghost" onClick={() => setStep(1)} disabled={!!busy}>← Back</button>
-            <button className="primary" disabled={!!busy} onClick={doImport}>Import as “{name}” →</button>
+            <div className="row">
+              <button disabled={!!busy || selected.size === 0} onClick={recheck}>Apply {selected.size || ""} and check again</button>
+              <button className="primary" disabled={!!busy} onClick={doImport}>Import{toApply.length ? ` with ${toApply.length} fix${toApply.length === 1 ? "" : "es"}` : ""} →</button>
+            </div>
           </div>
         </div>
       )}
 
       {step === 3 && result && (
-        <div className="stack">
+        <div className="stack rise" key="s3">
           <div className="row">
-            <span className="chip good">imported</span>
-            <span className="chip">{result.report.n_encounters} encounters</span>
-            <span className="chip">{result.report.n_variables} variables</span>
-            <span className="chip">{result.report.n_observations.toLocaleString()} observations</span>
-            {result.applied > 0 && <span className="chip on">{result.applied} suggestion{result.applied === 1 ? "" : "s"} applied</span>}
+            <span className="done-mark"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7" /></svg></span>
+            <div>
+              <b style={{ fontSize: 16 }}>“{result.name}” is ready.</b>
+              <div className="small muted">{num(result.report.n_encounters)} encounters · {num(result.report.n_variables)} variables · {num(result.report.n_observations)} observations</div>
+            </div>
           </div>
-          <p className="small muted">The cohort is saved under <code>{result.name}</code> in the data directory. The overview, the distributions and the patient pages are ready; the import report stays next to the cohort.</p>
+          <div className="row">
+            {result.report.applied.length > 0 && <span className="chip on">{result.report.applied.length} fix{result.report.applied.length === 1 ? "" : "es"} applied</span>}
+            {result.applied > 0 && <span className="chip on">{result.applied} suggestion{result.applied === 1 ? "" : "s"} applied</span>}
+            {result.report.summary.warning > 0 && <span className="chip warn">{result.report.summary.warning} warning{result.report.summary.warning === 1 ? "" : "s"} left to look at</span>}
+            {result.report.summary.error > 0 && <span className="chip danger">{result.report.summary.error} error{result.report.summary.error === 1 ? "" : "s"} left</span>}
+          </div>
+          <p className="small muted">The cohort is saved in the data directory with its import report. Every fix is listed in cohort.yaml, so you can always see what was changed. The remaining findings are on the profile page.</p>
           <div className="row">
             <button className="primary" onClick={() => onDone(result.name, "overview")}>Open the cohort</button>
-            <button onClick={() => onDone(result.name, "profile")}>Review findings and suggestions</button>
+            <button onClick={() => onDone(result.name, "profile")}>Remaining findings</button>
             <button className="ghost" onClick={() => { reset(); onMore?.(); }}>Add more data</button>
           </div>
         </div>
