@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import polars as pl
-from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -205,6 +205,7 @@ class AdviseApplyIn(BaseModel):
     rename: bool = False
 
 
+NO_PATHS: list[str] = Form(default=[])  # form field of the folder upload, see upload_files
 COVERAGE_VARIABLES = 40  # rows of the coverage heatmap; MIMIC has hundreds of variables
 
 # ------------------------------------------------------------------------- app
@@ -318,17 +319,23 @@ def create_app(
         write_synthetic(target, n_encounters=body.n, name=body.name, sites=body.sites)
         return {"name": body.name}
 
+    def _detected(p: Path) -> dict[str, Any]:
+        """Detection as JSON. ``source`` is the file or folder to import, which for a folder
+        holding a single table is that table, not the folder."""
+        det = detect(p)
+        src = Path(det.source)
+        preview = _records(read_table(src, n_rows=8)) if det.format == "table" else []
+        return {
+            **{k: (str(v) if isinstance(v, Path) else v) for k, v in det.__dict__.items()},
+            "preview": preview,
+        }
+
     @app.post("/api/detect")
     def detect_source(body: ImportIn) -> dict[str, Any]:
         p = Path(body.path)
         if not p.exists():
             raise HTTPException(404, f"{p} does not exist")
-        det = detect(p)
-        preview = _records(read_table(p, n_rows=8)) if det.format == "table" else []
-        return {
-            **{k: (str(v) if isinstance(v, Path) else v) for k, v in det.__dict__.items()},
-            "preview": preview,
-        }
+        return _detected(p)
 
     def _import(body: ImportIn) -> tuple[Cohort, Any]:
         p = Path(body.path)
@@ -355,6 +362,7 @@ def create_app(
         cohort.save(target)
         report.save(target)
         store.invalidate(name)
+        _discard_upload(Path(body.path))
         return {"name": name, "report": report.to_dict()}
 
     @app.get("/api/cohorts/{name}/import")
@@ -375,15 +383,73 @@ def create_app(
             source = inner[0] if len(inner) == 1 and inner[0].is_dir() else tmp / "unzipped"
         else:
             source = target
-        det = detect(source)
-        preview = _records(read_table(source, n_rows=8)) if det.format == "table" else []
+        detection = _detected(source)
+        return {"staged": detection["source"], "name": name or source.stem, "detection": detection}
+
+    # Folder uploads from the browser: a drop of a whole MIMIC-IV or FHIR directory arrives
+    # as many files with relative paths, in batches, into one staging directory, which is
+    # removed once the cohort is written.
+    uploads_dir = store.data_dir / ".uploads"
+
+    def _discard_upload(source: Path) -> None:
+        try:
+            rel = source.resolve().relative_to(uploads_dir.resolve())
+        except ValueError:
+            return  # not an upload, a path the user typed
+        if rel.parts:
+            shutil.rmtree(uploads_dir / rel.parts[0], ignore_errors=True)
+
+    @app.post("/api/uploads", status_code=201)
+    def upload_start() -> dict[str, Any]:
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        target = Path(tempfile.mkdtemp(prefix="drop-", dir=uploads_dir))
+        return {"id": target.name}
+
+    def _upload_dir(upload_id: str) -> Path:
+        target = uploads_dir / upload_id
+        if not upload_id.startswith("drop-") or "/" in upload_id or not target.is_dir():
+            raise HTTPException(404, "unknown upload")
+        return target
+
+    @app.post("/api/uploads/{upload_id}/files")
+    async def upload_files(
+        upload_id: str, files: list[UploadFile], paths: list[str] = NO_PATHS
+    ) -> dict[str, Any]:
+        base = _upload_dir(upload_id)
+        if paths and len(paths) != len(files):
+            raise HTTPException(400, "one path per file")
+        written = 0
+        for i, f in enumerate(files):
+            rel = paths[i] if paths else (f.filename or f"file-{i}")
+            rel = rel.replace("\\", "/").lstrip("/")
+            parts = [x for x in rel.split("/") if x not in ("", ".", "..")]
+            if not parts:
+                continue
+            target = base.joinpath(*parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("wb") as out:
+                while chunk := await f.read(4 << 20):
+                    out.write(chunk)
+                    written += len(chunk)
+        return {"received": len(files), "bytes": written}
+
+    @app.post("/api/uploads/{upload_id}/done")
+    def upload_done(upload_id: str, name: str | None = None) -> dict[str, Any]:
+        base = _upload_dir(upload_id)
+        entries = [p for p in base.iterdir() if not p.name.startswith(".")]
+        source = entries[0] if len(entries) == 1 else base
+        if source.is_file() and source.suffix == ".zip":
+            with zipfile.ZipFile(source) as zf:
+                zf.extractall(base / "unzipped")
+            inner = [p for p in (base / "unzipped").iterdir() if not p.name.startswith(".")]
+            source = inner[0] if len(inner) == 1 and inner[0].is_dir() else base / "unzipped"
+        detection = _detected(source)
+        n_files = sum(1 for p in source.rglob("*") if p.is_file()) if source.is_dir() else 1
         return {
-            "staged": str(source),
-            "name": name or source.stem,
-            "detection": {
-                **{k: (str(v) if isinstance(v, Path) else v) for k, v in det.__dict__.items()},
-                "preview": preview,
-            },
+            "staged": detection["source"],
+            "name": name or (source.stem if source != base else "upload"),
+            "n_files": n_files,
+            "detection": detection,
         }
 
     # ---- features, filters, rules

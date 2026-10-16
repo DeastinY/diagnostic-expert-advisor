@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 pytest.importorskip("fastapi")
+from pathlib import Path  # noqa: E402
+
 from fastapi.testclient import TestClient  # noqa: E402
 
 from dea.api import create_app  # noqa: E402
@@ -238,3 +240,50 @@ def test_encounter_chart_band_and_report_sections(client: TestClient) -> None:
     html = client.get("/api/cohorts/multi2/report").text
     assert "Across sites" in html and "Data quality checks" in html and "Sub-cohorts" in html
     assert "multi2_sub" in html
+
+
+def test_folder_upload_in_batches(client, tmp_path):
+    """A dropped folder arrives as files with relative paths; the result is a detected source."""
+    import io
+
+    import polars as pl
+
+    df = pl.DataFrame(
+        {
+            "encounter_id": ["a", "a", "b"],
+            "time": [0, 60, 0],
+            "variable": ["HR", "HR", "HR"],
+            "value": [80.0, 82.0, 70.0],
+        }
+    )
+    buf = io.BytesIO()
+    df.write_csv(buf)
+    up = client.post("/api/uploads")
+    assert up.status_code == 201
+    uid = up.json()["id"]
+    r = client.post(
+        f"/api/uploads/{uid}/files",
+        files=[("files", ("obs.csv", buf.getvalue(), "text/csv"))],
+        data={"paths": ["export/obs.csv"]},
+    )
+    assert r.status_code == 200 and r.json()["received"] == 1
+    r = client.post(
+        f"/api/uploads/{uid}/files",
+        files=[("files", ("junk.txt", b"ignore me", "text/plain"))],
+        data={"paths": ["export/../../escape.txt"]},
+    )
+    assert r.status_code == 200
+    done = client.post(f"/api/uploads/{uid}/done").json()
+    assert done["name"] == "export"
+    assert done["n_files"] == 2
+    staged = Path(done["staged"])  # the one table in the folder, not the folder
+    assert staged.name == "obs.csv" and staged.parent.name == "export"
+    assert (staged.parent / "escape.txt").exists()  # the escaping path stayed inside the upload
+    assert done["detection"]["format"] == "table"
+    assert done["detection"]["table_kind"] == "long"
+    assert client.post("/api/uploads/nope/done").status_code == 404
+    # the staged folder imports like any path
+    r = client.post("/api/cohorts/import", json={"path": str(staged), "name": "dropped"})
+    assert r.status_code == 201, r.text
+    assert r.json()["report"]["n_encounters"] == 2
+    assert not staged.exists()  # the staging folder is gone once the cohort is written

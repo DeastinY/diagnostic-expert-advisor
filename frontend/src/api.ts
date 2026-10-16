@@ -140,6 +140,16 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, (await res.json()).detail ?? res.statusText);
     return (await res.json()) as { staged: string; name: string; detection: Detection };
   },
+  uploadStart: () => request<{ id: string }>("/api/uploads", { method: "POST" }),
+  uploadFiles: async (id: string, batch: { file: File; path: string }[]) => {
+    const fd = new FormData();
+    for (const p of batch) { fd.append("files", p.file, p.file.name); fd.append("paths", p.path); }
+    const res = await fetch(`/api/uploads/${id}/files`, { method: "POST", body: fd, headers: authHeaders() });
+    if (!res.ok) throw new ApiError(res.status, (await res.json()).detail ?? res.statusText);
+    return (await res.json()) as { received: number; bytes: number };
+  },
+  uploadDone: (id: string, name?: string) =>
+    request<{ staged: string; name: string; n_files: number; detection: Detection }>(`/api/uploads/${id}/done${name ? `?name=${encodeURIComponent(name)}` : ""}`, { method: "POST" }),
   count: (name: string, where: Where) => request<{ n: number; n_total: number }>(`/api/cohorts/${name}/count${qs({}, where)}`),
   catalog: (name: string) => request<CatalogEntry[]>(`/api/cohorts/${name}/catalog`),
   addRule: (name: string, body: { kind: "filter" | "tag"; label: string; where: string; description?: string }) =>

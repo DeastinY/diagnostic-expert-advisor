@@ -40,11 +40,17 @@ are listed for scripts.
 
 ## Your own data
 
-In the browser: *Add data*, paste the path to your file or folder (or upload a file), and
-*Check first*. The DEA shows what it recognized (layout, columns, time unit, units) and what
-the checks found, without writing anything. *Import* writes the cohort. From there the
-overview, the distributions, the profile page with its suggestions and the patient pages are
-ready.
+In the browser: drop your file or folder anywhere on the cohorts page, or click the drop zone
+to choose one. The guided import then goes through four steps: what was recognized (layout,
+columns, time unit, units; for a table you can correct the column mapping), the checks (run
+without writing anything), the import, and done. On the checks step you can tick "apply the
+suggested harmonization", which renames recognized variables to canonical names, moves
+constant attributes to the static table and adds tags right after the import. From there the
+overview, the distributions, the profile page and the patient pages are ready.
+
+Dropped folders are uploaded in batches into `.uploads/` inside the data directory and removed
+after the import. For a folder that is already on the machine and large (the full MIMIC-IV),
+paste its path into the field below the drop zone instead.
 
 The same from the command line:
 
@@ -99,7 +105,7 @@ side by side. Both `.csv` and `.csv.gz` are read.
 
 ### Import
 
-Paste `physionet.org/files/mimic-iv-demo/2.2` into *Add data* and hit *Check first*, or:
+Drop the downloaded `2.2` folder onto the cohorts page (or paste its path), or:
 
 ```bash
 uv run dea import physionet.org/files/mimic-iv-demo/2.2 data/mimic-demo

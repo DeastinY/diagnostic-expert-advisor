@@ -70,10 +70,13 @@ Start the server and do the rest in the browser:
 uv run dea serve --data-dir data      # http://127.0.0.1:8000
 ```
 
-On the landing page, *Add data* lets you create a demo cohort (three synthetic hospitals) with
-one click, or paste the path to your own export and hit *Check first*. That shows what the
-importer recognized and what the checks found without writing anything. *Import* then writes
-the cohort, and the overview, the distributions and the patient pages are ready.
+Drop a folder or a file anywhere on the page (a MIMIC-IV download, FHIR resources, a CSV or
+Parquet table, a zip) and the guided import takes over: it shows what was recognized, runs the
+checks without writing anything, imports on your go, and can apply the suggested harmonization
+in the same step. Afterwards the overview, the distributions and the patient pages are ready.
+Large folders that are already on the machine can be pasted as a path instead of uploading
+them. The *Demo* tab generates a synthetic cohort over three hospitals if you have no data at
+hand.
 
 The same from the command line:
 
@@ -96,8 +99,8 @@ wget -r -N -c -np --user YOU --ask-password https://physionet.org/files/mimic-iv
 uv run dea serve --data-dir data
 ```
 
-Then paste `physionet.org/files/mimic-iv-demo/2.2` into *Add data*, or run
-`uv run dea import physionet.org/files/mimic-iv-demo/2.2 data/mimic`. The importer reads
+Then drop the downloaded `2.2` folder onto the page (or paste its path, or run
+`uv run dea import physionet.org/files/mimic-iv-demo/2.2 data/mimic`). The importer reads
 `icu/` (stays, chart, input, procedure and output events), `hosp/` (patients, admissions,
 labs, diagnoses) and `note/`. Units are converted per row, the °F and °C temperature items end
 up in one variable and ICD-9 and ICD-10 diagnoses become `dx_<group>` columns. The full

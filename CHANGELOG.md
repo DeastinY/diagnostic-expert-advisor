@@ -2,6 +2,13 @@
 
 ## 2.0.0a2
 
+Web app
+- Guided import: drop a folder or a file anywhere on the cohorts page (a whole MIMIC-IV or
+  FHIR download works), see what was recognized, run the checks, import, and optionally apply
+  the suggested harmonization in one go. Folder uploads go in batches to `.uploads/` in the
+  data directory and are removed after the import. Pasting a path still works for large
+  folders that are already on the machine.
+
 Fixes
 - The overview no longer fails on cohorts with hundreds of variables: Altair's row limit is
   off and the coverage heatmap draws the 40 best covered variables. Charts default to the
