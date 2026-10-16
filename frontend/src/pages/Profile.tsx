@@ -176,6 +176,7 @@ function AdvisorPanel() {
         {!st?.configured && !key && !baseUrl && st?.installed && <span className="small muted">set an API key or base URL</span>}
       </div>
       {err && <Alert kind="danger">{err}</Alert>}
+      <MappingProposals name={name} where={where} creds={{ model: model || undefined, base_url: baseUrl || undefined, api_key: key || undefined }} enabled={!!st?.installed && (!!st?.configured || !!key || !!baseUrl)} onApplied={reload} />
       {rec && (
         <div className="stack" style={{ gap: 10 }}>
           <p>{rec.summary}</p>
@@ -229,5 +230,51 @@ function ImportCard({ name }: { name: string }) {
       <b className="small">Checks at import</b>
       <ChecksList checks={r.checks ?? []} empty="No findings at import." />
     </Card>
+  );
+}
+
+
+function MappingProposals({ name, where, creds, enabled, onApplied }: { name: string; where: string[]; creds: { model?: string; base_url?: string; api_key?: string }; enabled: boolean; onApplied: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<{ proposals: { variable: string; concept: string; confidence: number; rationale: string }[]; mapping: Record<string, string>; n_unmatched: number } | null>(null);
+  const [chosen, setChosen] = useState<Record<string, boolean>>({});
+  const [err, setErr] = useState<string | null>(null);
+  const selected = Object.entries(chosen).filter(([, on]) => on).map(([v]) => v);
+  return (
+    <div className="stack" style={{ gap: 8, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+      <div className="row spread">
+        <div><b className="small">Bulk mapping</b><div className="small muted">Ask the model for a dictionary concept for every variable the offline matcher could not place. It sees names, units and ranges only.</div></div>
+        <button className="sm" disabled={busy || !enabled} onClick={async () => {
+          setBusy(true); setErr(null);
+          try { const r = await api.adviseMap(name, where, creds); setRes(r); setChosen(Object.fromEntries(Object.keys(r.mapping).map((v) => [v, true]))); }
+          catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+        }}>{busy ? <Spinner label="Mapping…" /> : "Propose mappings"}</button>
+      </div>
+      {err && <Alert kind="danger">{err}</Alert>}
+      {res && res.n_unmatched === 0 && <p className="muted small">Every variable already matches the dictionary.</p>}
+      {res && res.proposals.length > 0 && (
+        <>
+          <div className="table-wrap" style={{ maxHeight: 260 }}>
+            <table className="table"><thead><tr><th></th><th>Variable</th><th>Concept</th><th>Confidence</th><th>Why</th></tr></thead>
+              <tbody>{res.proposals.map((p) => (
+                <tr key={p.variable}>
+                  <td>{p.concept && <input type="checkbox" checked={!!chosen[p.variable]} onChange={(e) => setChosen({ ...chosen, [p.variable]: e.target.checked })} />}</td>
+                  <td>{p.variable}</td><td>{p.concept ? <code>{p.concept}</code> : <span className="muted">no match</span>}</td>
+                  <td className="num">{Math.round(p.confidence * 100)}%</td><td style={{ whiteSpace: "normal" }}>{p.rationale}</td>
+                </tr>))}</tbody></table>
+          </div>
+          <div className="row">
+            <button className="primary sm" disabled={busy || selected.length === 0} onClick={async () => {
+              setBusy(true);
+              try {
+                const mapping = Object.fromEntries(res.proposals.filter((p) => chosen[p.variable] && p.concept).map((p) => [p.variable, p.concept]));
+                const r = await api.applyMapping(name, { mapping }); toast(`Mapped ${r.applied.length} variable(s)`); setRes(null); onApplied();
+              } catch (e) { toast((e as Error).message); } finally { setBusy(false); }
+            }}>Apply {selected.length} mapping(s)</button>
+            <span className="small muted">rewrites the cohort; labels, units and LOINC codes follow the concept</span>
+          </div>
+        </>
+      )}
+    </div>
   );
 }

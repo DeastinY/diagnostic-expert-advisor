@@ -113,6 +113,50 @@ The MIMIC importer reads `hosp/diagnoses_icd` and `hosp/d_icd_diagnoses`; the FH
 reads `Condition` resources coded in ICD-10, ICD-10-CM, ICD-10-GM or ICD-9-CM. Groups are
 prefix lists in one dictionary, so a site can extend them without touching code.
 
+## Site mapping files
+
+A hospital names things its own way, and the dictionary cannot know every local label.
+`dea import <src> <out> --mapping site.yaml` (or `dea rename <cohort> --mapping-file site.yaml`,
+or `POST /api/cohorts/{name}/mapping`) applies a site's own mapping once and for all:
+
+```yaml
+heart_rate: ["HR", "Herzfrequenz", "220045"]   # concept: [local names or item ids]
+map: ["ABP mean", "ABPm"]
+"Temperature Celsius": temperature              # plain  source: target  pairs work too
+units:
+  "ABP mean": mmHg
+```
+
+Targets that are dictionary concepts bring their label, unit and LOINC code along; other
+targets are plain renames. Observations, events and intervals are renamed alike, and the
+applied mapping is recorded in `cohort.yaml` under `variable_map`.
+
+## Bulk mapping with the advisor
+
+For everything the offline matcher and the site file leave unmapped, the profile page's
+advisor panel can ask the model for a concept per variable ("Propose mappings"). The model
+receives the closed list of dictionary concepts and, per variable, its name, unit, median,
+1st-99th percentiles and sampling interval: aggregates only, as everywhere in DEA. Proposals
+below 60% confidence or naming a concept that does not exist are dropped; the rest are
+reviewed and applied as a mapping.
+
+## Medications
+
+The dictionary carries the common ICU drugs (norepinephrine, epinephrine, vasopressin,
+dopamine, dobutamine, propofol, midazolam, fentanyl, insulin, heparin, furosemide, vancomycin,
+meropenem, piperacillin-tazobactam) with RxNorm and ATC codes, a dose or rate unit and MIMIC
+item ids. Administrations are intervals (`start, end, variable, value` with the rate or dose
+as value): MIMIC `inputevents` and FHIR `MedicationAdministration` feed them, the FHIR export
+writes them back with RxNorm codes, and the feature table carries `<drug>__hours` per stay so
+"Received norepinephrine" tags are one click away.
+
+## Case mix per site
+
+The site comparison shows, before any per-variable finding, who is treated where: encounters,
+median age, share of women, median length of stay, mortality and the prevalence of every
+diagnosis group per site. A distribution shift between sites is often the population rather
+than the device; this table is where to look first.
+
 ## Exchange: FHIR R4
 
 `dea.standards.fhir` reads bulk-data exports (one NDJSON file per resource type) and Bundle

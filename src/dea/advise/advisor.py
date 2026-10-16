@@ -20,7 +20,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from dea.advise.schema import Recommendation
+from dea.advise.schema import MappingProposals, Recommendation
 from dea.profile.profiler import CohortProfile
 
 SYSTEM_PROMPT = """You are a clinical data engineering assistant inside the Diagnostic Expert
@@ -47,6 +47,12 @@ Recommend how to process and store the cohort for exploration and machine learni
 - storage notes and warnings about data quality or privacy (e.g. free-text or identifier columns).
 
 Only reference variables and static columns that exist in the profile. Be concrete and brief."""
+
+
+MAPPING_PROMPT = """You harmonize clinical variable names inside the Diagnostic Expert Advisor.
+You receive aggregate descriptions of variables (names, units, value ranges) and a closed list
+of canonical concepts with units. Map each variable to the concept meaning the same measurement
+or drug, or leave it unmapped. Prefer leaving a variable unmapped over guessing."""
 
 
 class AdvisorError(RuntimeError):
@@ -138,11 +144,44 @@ class Advisor:
                     f"structured output failed ({first}); JSON fallback failed ({second})"
                 ) from second
 
-    def _structured(self, messages: list[dict[str, str]]) -> Recommendation:
+    def map_variables(
+        self, variables: list[dict[str, Any]], concepts: list[dict[str, str]]
+    ) -> MappingProposals:
+        """Propose dictionary concepts for variables the offline matcher could not place.
+
+        ``variables`` are aggregate descriptions (name, unit, range, role hints); ``concepts``
+        the allowed targets (name, label, unit). Nothing patient-level is sent.
+        """
+        user = (
+            "Allowed concepts (JSON):\n"
+            + json.dumps(concepts, indent=0)
+            + "\n\nVariables to map (JSON):\n"
+            + json.dumps(variables, indent=0, default=str)
+            + "\n\nFor every variable pick the one concept that denotes the same measurement "
+            "or drug (consider German and English names, abbreviations, item codes, units and "
+            "value ranges), or an empty concept when none fits. Never invent concept names."
+        )
+        messages = [
+            {"role": "system", "content": MAPPING_PROMPT},
+            {"role": "user", "content": user},
+        ]
+        try:
+            return self._structured(messages, MappingProposals)
+        except AdvisorError:
+            raise
+        except Exception as first:
+            try:
+                return self._json_fallback(messages, MappingProposals)
+            except Exception as second:
+                raise AdvisorError(
+                    f"structured output failed ({first}); JSON fallback failed ({second})"
+                ) from second
+
+    def _structured(self, messages: list[dict[str, str]], model: type = Recommendation) -> Any:
         completion = self.client.chat.completions.parse(
             model=self.settings.model,
             messages=messages,
-            response_format=Recommendation,
+            response_format=model,
         )
         choice = completion.choices[0]
         parsed = getattr(choice.message, "parsed", None)
@@ -153,8 +192,8 @@ class Advisor:
             )
         return parsed
 
-    def _json_fallback(self, messages: list[dict[str, str]]) -> Recommendation:
-        schema = json.dumps(Recommendation.model_json_schema())
+    def _json_fallback(self, messages: list[dict[str, str]], model: type = Recommendation) -> Any:
+        schema = json.dumps(model.model_json_schema())
         messages = [
             messages[0],
             {
@@ -171,6 +210,6 @@ class Advisor:
         )
         text = completion.choices[0].message.content or ""
         try:
-            return Recommendation.model_validate_json(text)
+            return model.model_validate_json(text)
         except ValidationError as exc:
             raise AdvisorError(f"model answer did not match the schema: {exc}") from exc

@@ -186,6 +186,12 @@ class RenameIn(BaseModel):
     mapping: dict[str, str]
 
 
+class MappingIn(BaseModel):
+    path: str | None = None
+    mapping: dict[str, str] = Field(default_factory=dict)
+    units: dict[str, str] = Field(default_factory=dict)
+
+
 class AdviseIn(BaseModel):
     model: str | None = None
     base_url: str | None = None
@@ -674,7 +680,13 @@ def create_app(
     ) -> dict[str, Any]:
         """Per-site comparison: profile table, checks and charts for one site column."""
         from dea import charts
-        from dea.quality import detect_site_column, site_bins, site_checks, site_profile
+        from dea.quality import (
+            detect_site_column,
+            site_bins,
+            site_casemix,
+            site_checks,
+            site_profile,
+        )
 
         full = store.get(name)
         cohort = _filtered(full, where)
@@ -761,6 +773,9 @@ def create_app(
                 .sort(["n", col], descending=[True, False])
             ),
             "profile": _records(prof),
+            "casemix": _records(
+                site_casemix(cohort, col).filter(pl.col("site").is_in(big_sites[:12]))
+            ),
             "checks": [c.to_dict() for c in found],
             "charts": {
                 "distributions": dist.to_dict() if dist is not None else None,
@@ -851,6 +866,68 @@ def create_app(
             cohort.config.save(cohort.root / "cohort.yaml")
         store.invalidate(name)
         return {"variables": cohort.variables, "renamed": body.rename}
+
+    @app.post("/api/cohorts/{name}/mapping")
+    def apply_site_mapping(name: str, body: MappingIn) -> dict[str, Any]:
+        """Apply a site mapping (local names -> concepts) from a YAML path or an inline dict."""
+        from dea.standards.mapping import apply_mapping, load_mapping, load_units, mapping_report
+
+        cohort = store.get(name)
+        if body.path:
+            p = Path(body.path)
+            if not p.exists():
+                raise HTTPException(404, f"{p} does not exist")
+            mapping, units = load_mapping(p), load_units(p)
+        else:
+            mapping, units = body.mapping, body.units
+        info = mapping_report(cohort, mapping)
+        apply_mapping(cohort, mapping, units).save()
+        store.invalidate(name)
+        return info
+
+    @app.post("/api/cohorts/{name}/advise/map")
+    def advise_map(name: str, body: AdviseIn, where: Where = None) -> dict[str, Any]:
+        """Ask the advisor for concepts for every variable the dictionary could not match."""
+        from dea.advise import Advisor, AdvisorError
+        from dea.suggest.vocab import load_dictionary
+
+        cohort = _filtered(store.get(name), where)
+        prof = profile_cohort(cohort)
+        d = load_dictionary()
+        unmatched = [
+            {
+                "name": v.name,
+                "unit": cohort.config.variable_units.get(v.name, ""),
+                "median": v.median,
+                "p01_p99": [v.p01, v.p99],
+                "median_interval": v.interval_label,
+            }
+            for v in prof.variables
+            if d.match(v.name) is None
+        ]
+        unmatched += [
+            {"name": v, "unit": cohort.config.variable_units.get(v, ""), "kind": "interval"}
+            for v in cohort.interval_variables
+            if d.match(v) is None
+        ]
+        if not unmatched:
+            return {"proposals": [], "mapping": {}, "n_unmatched": 0}
+        concepts = [
+            {"name": c.name, "label": c.label, "unit": c.unit, "role": c.role} for c in d.concepts
+        ]
+        try:
+            props = Advisor(
+                model=body.model, base_url=body.base_url, api_key=body.api_key
+            ).map_variables(unmatched, concepts)
+        except AdvisorError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        known = {c.name for c in d.concepts}
+        clean = [p for p in props.proposals if not p.concept or p.concept in known]
+        return {
+            "proposals": [p.model_dump() for p in clean],
+            "mapping": {p.variable: p.concept for p in clean if p.concept and p.confidence >= 0.6},
+            "n_unmatched": len(unmatched),
+        }
 
     @app.get("/api/cohorts/{name}/report", response_class=HTMLResponse)
     def report(name: str, where: Where = None) -> str:

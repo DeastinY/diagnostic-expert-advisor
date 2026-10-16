@@ -119,3 +119,23 @@ class Recommendation(BaseModel):
         if plots:
             new.plots = plots[:8]
         return new
+
+
+class MappingProposal(BaseModel):
+    variable: str = Field(description="Exact source variable name")
+    concept: str = Field(
+        description="Canonical concept name from the allowed list, or empty string when none fits"
+    )
+    confidence: float = Field(ge=0, le=1)
+    rationale: str = Field(description="One short sentence")
+
+
+class MappingProposals(BaseModel):
+    proposals: list[MappingProposal]
+
+    def as_mapping(self, min_confidence: float = 0.6) -> dict[str, str]:
+        return {
+            p.variable: p.concept
+            for p in self.proposals
+            if p.concept and p.concept != p.variable and p.confidence >= min_confidence
+        }
