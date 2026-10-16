@@ -16,6 +16,7 @@ import altair as alt
 import polars as pl
 
 from dea.core import TIME, VALUE, VARIABLE, Encounter
+from dea.core.model import END, START
 
 SERIES_LIGHT = [
     "#2a78d6",
@@ -519,6 +520,40 @@ def small_multiples(
     x_axis = alt.X("hours:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False))
     x_last = alt.X("hours:Q", title="Hours since admission", axis=alt.Axis(labelFlush=True))
     panels = []
+    if events and encounter.intervals.height:
+        iv = encounter.intervals.with_columns(
+            (pl.col(START).dt.total_seconds() / 3600.0).alias("start_h"),
+            (pl.col(END).dt.total_seconds() / 3600.0).alias("end_h"),
+        ).select("start_h", "end_h", VARIABLE, VALUE)
+        kinds_iv = list(dict.fromkeys(iv.get_column(VARIABLE).to_list()))[:8]
+        rail_iv = (
+            alt.Chart(iv.to_pandas())
+            .mark_bar(height=10, cornerRadius=2)
+            .encode(
+                x=alt.X(
+                    "start_h:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False)
+                ),
+                x2="end_h:Q",
+                y=alt.Y(f"{VARIABLE}:N", title=None, axis=alt.Axis(labelLimit=160)),
+                color=alt.Color(
+                    f"{VARIABLE}:N",
+                    scale=alt.Scale(domain=kinds_iv, range=list(t.series[: len(kinds_iv)])),
+                    legend=None,
+                ),
+                tooltip=[
+                    alt.Tooltip(f"{VARIABLE}:N", title="Intervention"),
+                    alt.Tooltip("start_h:Q", title="From hour", format=".1f"),
+                    alt.Tooltip("end_h:Q", title="To hour", format=".1f"),
+                    alt.Tooltip(f"{VALUE}:Q", title="Rate / value", format=".3~f"),
+                ],
+            )
+            .properties(
+                height=14 * len(kinds_iv) + 10,
+                width="container",
+                title=alt.Title("Interventions", fontSize=11, color=t.ink2),
+            )
+        )
+        panels.append(rail_iv)
     if events and encounter.events.height:
         ev = encounter.events.with_columns(hours).select("hours", VARIABLE, VALUE).to_pandas()
         kinds = list(dict.fromkeys(ev[VARIABLE]))[:8]

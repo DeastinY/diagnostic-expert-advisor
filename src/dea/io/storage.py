@@ -7,6 +7,7 @@
       static.parquet              one row per encounter, keyed by encounter_id
       dynamic/bucket=NN/*.parquet numeric observations, long format
       events/bucket=NN/*.parquet  non-numeric observations (strings), long format
+      intervals/bucket=NN/*.parquet interventions with a start and an end (infusions, ventilation)
       derived/<name>.parquet      results of Cohort.apply(..., name=...) and caches
 
 Observations are spread over a bounded number of hash buckets (at most 256) rather than
@@ -27,12 +28,21 @@ from pathlib import Path
 import polars as pl
 
 from dea.core.config import CohortConfig
-from dea.core.model import ENCOUNTER_ID, EVENT_SCHEMA, LONG_SCHEMA, TIME, Cohort
+from dea.core.model import (
+    ENCOUNTER_ID,
+    EVENT_SCHEMA,
+    INTERVAL_SCHEMA,
+    LONG_SCHEMA,
+    START,
+    TIME,
+    Cohort,
+)
 
 COHORT_FILE = "cohort.yaml"
 STATIC_FILE = "static.parquet"
 DYNAMIC_DIR = "dynamic"
 EVENTS_DIR = "events"
+INTERVALS_DIR = "intervals"
 DERIVED_DIR = "derived"
 BUCKET = "bucket"
 ENCOUNTERS_PER_BUCKET = 500
@@ -49,7 +59,11 @@ def is_cohort_dir(path: Path | str) -> bool:
 
 
 def sink_long(
-    frame: pl.LazyFrame | pl.DataFrame, directory: Path, buckets: int, tag: str = "data"
+    frame: pl.LazyFrame | pl.DataFrame,
+    directory: Path,
+    buckets: int,
+    tag: str = "data",
+    time_col: str = TIME,
 ) -> None:
     """Stream a long frame into ``directory/bucket=NN/<tag>-<i>.parquet``, sorted per file.
 
@@ -65,7 +79,7 @@ def sink_long(
     (
         frame.lazy()
         .with_columns((pl.col(ENCOUNTER_ID).hash() % buckets).alias(BUCKET))
-        .sort(BUCKET, ENCOUNTER_ID, TIME)
+        .sort(BUCKET, ENCOUNTER_ID, time_col)
         .sink_parquet(
             pl.PartitionBy(
                 str(directory), key=BUCKET, include_key=False, file_path_provider=file_name
@@ -95,14 +109,15 @@ def save_cohort(cohort: Cohort, path: Path | str) -> Path:
 
     # Observations go to temporary directories first, so that saving in place never
     # reads from files that are being replaced.
-    for name, frame in (
-        (DYNAMIC_DIR, cohort.dynamic),
-        (EVENTS_DIR, cohort.events),
+    for name, frame, time_col in (
+        (DYNAMIC_DIR, cohort.dynamic, TIME),
+        (EVENTS_DIR, cohort.events, TIME),
+        (INTERVALS_DIR, cohort.intervals, START),
     ):
         tmp = root / f"{name}.tmp"
         if tmp.exists():
             shutil.rmtree(tmp)
-        sink_long(frame, tmp, buckets)
+        sink_long(frame, tmp, buckets, time_col=time_col)
         _replace_dir(root / name, tmp)
 
     cohort.static.write_parquet(root / STATIC_FILE)
@@ -111,16 +126,17 @@ def save_cohort(cohort: Cohort, path: Path | str) -> Path:
     cache.unlink(missing_ok=True)
     cohort.dynamic = scan_long(root / DYNAMIC_DIR, LONG_SCHEMA)
     cohort.events = scan_long(root / EVENTS_DIR, EVENT_SCHEMA)
+    cohort.intervals = scan_long(root / INTERVALS_DIR, INTERVAL_SCHEMA)
     return root
 
 
 def write_cohort_batches(
     path: Path | str,
     config: CohortConfig,
-    batches: Iterable[tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame | None]],
+    batches: Iterable[tuple],
     n_encounters: int,
 ) -> Path:
-    """Write a cohort from an iterator of ``(static, dynamic, events)`` batches.
+    """Write a cohort from an iterator of ``(static, dynamic, events[, intervals])`` batches.
 
     Used for sources too large to hold in memory (synthetic generation, chunked imports).
     """
@@ -130,11 +146,15 @@ def write_cohort_batches(
     root.mkdir(parents=True)
     buckets = n_buckets(n_encounters)
     statics = []
-    for i, (static, dynamic, events) in enumerate(batches):
+    for i, batch in enumerate(batches):
+        static, dynamic, events = batch[:3]
+        intervals = batch[3] if len(batch) > 3 else None
         statics.append(static)
         sink_long(dynamic, root / DYNAMIC_DIR, buckets, tag=f"b{i:05d}")
         if events is not None and events.height:
             sink_long(events, root / EVENTS_DIR, buckets, tag=f"b{i:05d}")
+        if intervals is not None and intervals.height:
+            sink_long(intervals, root / INTERVALS_DIR, buckets, tag=f"b{i:05d}", time_col=START)
     static = pl.concat(statics, how="diagonal_relaxed").sort(ENCOUNTER_ID)
     static.write_parquet(root / STATIC_FILE)
     config.save(root / COHORT_FILE)
@@ -149,7 +169,8 @@ def load_cohort(path: Path | str) -> Cohort:
     static = pl.read_parquet(root / STATIC_FILE)
     dynamic = scan_long(root / DYNAMIC_DIR, LONG_SCHEMA)
     events = scan_long(root / EVENTS_DIR, EVENT_SCHEMA)
-    return Cohort(static, dynamic, events=events, config=config, root=root)
+    intervals = scan_long(root / INTERVALS_DIR, INTERVAL_SCHEMA)
+    return Cohort(static, dynamic, events=events, intervals=intervals, config=config, root=root)
 
 
 def delete_cohort(path: Path | str) -> None:

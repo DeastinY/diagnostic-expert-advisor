@@ -17,7 +17,18 @@ import numpy as np
 import polars as pl
 
 from dea.core.config import CohortConfig, ProcessingConfig, Rule
-from dea.core.model import ENCOUNTER_ID, EVENT_SCHEMA, LONG_SCHEMA, TIME, VALUE, VARIABLE, Cohort
+from dea.core.model import (
+    ENCOUNTER_ID,
+    END,
+    EVENT_SCHEMA,
+    INTERVAL_SCHEMA,
+    LONG_SCHEMA,
+    START,
+    TIME,
+    VALUE,
+    VARIABLE,
+    Cohort,
+)
 
 
 @dataclass(frozen=True)
@@ -134,6 +145,58 @@ def _encounter_long(
     )
 
 
+def _encounter_intervals(
+    rng: np.random.Generator, eid: str, severity: float, los_s: int
+) -> pl.DataFrame:
+    """Interventions with a duration: a norepinephrine infusion and ventilation episodes."""
+    rows: list[dict[str, Any]] = []
+    if severity >= 0.35:  # vasopressor episode(s), rate in µg/kg/min
+        n_episodes = 1 + int(rng.random() < severity)
+        t = int(rng.integers(0, max(1, los_s // 4)))
+        for _ in range(n_episodes):
+            length = int(np.clip(rng.normal(36, 12) * 3600 * severity, 3600, max(3600, los_s - t)))
+            rows.append(
+                {
+                    ENCOUNTER_ID: eid,
+                    START: t,
+                    END: min(t + length, los_s),
+                    VARIABLE: "Norepinephrine_infusion",
+                    VALUE: round(
+                        float(np.clip(rng.normal(0.15, 0.08) * severity * 3, 0.02, 1.0)), 3
+                    ),
+                }
+            )
+            t = min(los_s, t + length + int(rng.integers(3600, 12 * 3600)))
+            if t >= los_s:
+                break
+    if severity >= 0.25 and rng.random() < 0.8:  # invasive ventilation episode
+        start = int(rng.integers(0, max(1, los_s // 6)))
+        length = int(np.clip(rng.normal(72, 36) * 3600 * severity, 2 * 3600, max(2 * 3600, los_s)))
+        rows.append(
+            {
+                ENCOUNTER_ID: eid,
+                START: start,
+                END: min(start + length, los_s),
+                VARIABLE: "Ventilation",
+                VALUE: 1.0,
+            }
+        )
+    frame = pl.DataFrame(
+        rows,
+        schema={
+            ENCOUNTER_ID: pl.String(),
+            START: pl.Int64(),
+            END: pl.Int64(),
+            VARIABLE: pl.String(),
+            VALUE: pl.Float64(),
+        },
+    )
+    return frame.with_columns(
+        pl.duration(seconds=pl.col(START)).cast(INTERVAL_SCHEMA[START]).alias(START),
+        pl.duration(seconds=pl.col(END)).cast(INTERVAL_SCHEMA[END]).alias(END),
+    )
+
+
 def _encounter_events(
     rng: np.random.Generator, eid: str, severity: float, los_s: int
 ) -> pl.DataFrame:
@@ -237,6 +300,7 @@ def default_config(name: str = "synthetic") -> CohortConfig:
             Rule(label="Moderate ARDS", where='"Horowitz__min" >= 100 AND "Horowitz__min" < 200'),
             Rule(label="Mild ARDS", where='"Horowitz__min" >= 200 AND "Horowitz__min" < 300'),
             Rule(label="Vasopressors", where='"Norepinephrine__max" > 0'),
+            Rule(label="Ventilated", where='"Ventilation__hours" > 0'),
         ],
         plots=["HR", "MAP", "SpO2", "Horowitz", "FiO2", "PEEP", "Lactate", "Norepinephrine"],
         variable_labels={s.name: s.label for s in SPECS}
@@ -262,9 +326,9 @@ def _ids(rng: np.random.Generator, n: int) -> list[str]:
 
 def _generate_batch(
     rng: np.random.Generator, ids: list[str], min_hours: float, max_hours: float
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """Static table, numeric observations and events for the given encounter ids."""
-    static_rows, dynamics, events = [], [], []
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Static table, numeric observations, events and intervals for the given encounter ids."""
+    static_rows, dynamics, events, intervals = [], [], [], []
     for eid in ids:
         severity = float(np.clip(rng.beta(2, 3), 0.02, 0.98))
         los_h = float(
@@ -291,7 +355,13 @@ def _generate_batch(
         dynamics.append(_encounter_long(rng, eid, severity, los_s))
         events.append(_encounter_events(rng, eid, severity, los_s))
         events.append(_encounter_notes(rng, eid, los_s))
-    return pl.DataFrame(static_rows).sort(ENCOUNTER_ID), pl.concat(dynamics), pl.concat(events)
+        intervals.append(_encounter_intervals(rng, eid, severity, los_s))
+    return (
+        pl.DataFrame(static_rows).sort(ENCOUNTER_ID),
+        pl.concat(dynamics),
+        pl.concat(events),
+        pl.concat(intervals),
+    )
 
 
 SITES = ("Hospital A", "Hospital B", "Hospital C")
@@ -347,12 +417,14 @@ def generate_cohort(
     differences of :data:`SITE_EFFECTS`, and the config names ``site`` as the site column.
     """
     rng = np.random.default_rng(seed)
-    static, dynamic, events = _generate_batch(rng, _ids(rng, n_encounters), min_hours, max_hours)
+    static, dynamic, events, intervals = _generate_batch(
+        rng, _ids(rng, n_encounters), min_hours, max_hours
+    )
     config = default_config(name)
     if sites > 1:
         static, dynamic = _with_sites(static, dynamic, sites)
         config.site_column = "site"
-    return Cohort(static, dynamic, events=events, config=config)
+    return Cohort(static, dynamic, events=events, intervals=intervals, config=config)
 
 
 def write_synthetic(
@@ -373,12 +445,12 @@ def write_synthetic(
 
     def batches():  # noqa: ANN202
         for i in range(0, len(ids), batch_size):
-            static, dynamic, events = _generate_batch(
+            static, dynamic, events, intervals = _generate_batch(
                 rng, ids[i : i + batch_size], min_hours, max_hours
             )
             if sites > 1:
                 static, dynamic = _with_sites(static, dynamic, sites)
-            yield static, dynamic, events
+            yield static, dynamic, events, intervals
 
     config = default_config(name or Path(path).name)
     if sites > 1:

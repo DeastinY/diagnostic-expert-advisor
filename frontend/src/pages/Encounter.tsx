@@ -38,6 +38,14 @@ export function Encounter() {
           </div>
           {chart.loading ? <Spinner /> : <VegaChart spec={chart.data?.spec} />}
         </Card>
+        {e.intervals.length > 0 && (
+          <Card title={`Interventions (${e.intervals.length})`}>
+            <div className="table-wrap" style={{ maxHeight: 240 }}>
+              <table className="table"><thead><tr><th>From hour</th><th>To hour</th><th>Intervention</th><th>Rate / value</th></tr></thead>
+                <tbody>{e.intervals.map((iv, i) => <tr key={i}><td className="num">{iv.start_h.toFixed(1)}</td><td className="num">{iv.end_h.toFixed(1)}</td><td>{labels[iv.variable] ?? iv.variable}</td><td className="num">{iv.value}</td></tr>)}</tbody></table>
+            </div>
+          </Card>
+        )}
         {e.events.length > 0 && (
           <Card title={`Events (${e.events.length})`}>
             <div className="table-wrap" style={{ maxHeight: 320 }}>
