@@ -45,9 +45,14 @@ dev = ["dea[all]", "pytest>=8", "ruff>=0.6", "httpx>=0.27"]
 [project.scripts]
 dea = "dea.cli:main"
 
+# `uv sync` installs the core plus this group; add extras with `uv sync --extra web --extra ai`
+# or everything with `uv sync --all-extras`.
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6", "httpx>=0.27", "playwright>=1.45"]
+
 [project.urls]
-Source = "https://github.com/JRC-COMBINE/DEA"
-Issues = "https://github.com/JRC-COMBINE/DEA/issues"
+Source = "https://github.com/DeastinY/diagnostic-expert-advisor"
+Issues = "https://github.com/DeastinY/diagnostic-expert-advisor/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dea"]
