@@ -42,7 +42,7 @@ def test_mimic_import_through_converter(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setenv("DEA_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(mimic, "SMALL_GZ_BYTES", 0)  # force the block converter
-    root = write_mimic_demo(tmp_path / "mimic", n_stays=4, seed=7)
+    root = write_mimic_demo(tmp_path / "mimic", n_stays=4, seed=7, max_hours=48)
     cohort, report = import_path(root, name="m")
     assert report.n_encounters == 4 and "Heart Rate" in cohort.variables
     assert any((tmp_path / "cache").glob("chartevents.csv.gz.*/part-00000.parquet"))

@@ -12,7 +12,7 @@ from dea.synth import write_mimic_demo
 
 @pytest.fixture(scope="module")
 def mimic_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return write_mimic_demo(tmp_path_factory.mktemp("mimic"), n_stays=5, seed=3)
+    return write_mimic_demo(tmp_path_factory.mktemp("mimic"), n_stays=5, seed=3, max_hours=96)
 
 
 def test_layout_matches_mimic(mimic_root: Path) -> None:
