@@ -64,7 +64,7 @@ def test_apply_suggestions_roundtrip(tmp_path: Path) -> None:
 
 
 def test_suggestions_on_mimic(tmp_path: Path) -> None:
-    root = write_mimic_demo(tmp_path / "m", n_stays=4, seed=2)
+    root = write_mimic_demo(tmp_path / "m", n_stays=4, seed=2, max_hours=72)
     cohort, _ = import_mimic(root)
     cohort.save(tmp_path / "mc")
     sugg = {s.id: s for s in suggest(load_cohort(tmp_path / "mc"))}

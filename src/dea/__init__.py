@@ -12,7 +12,7 @@ The public API lives in :mod:`dea.core` (data model), :mod:`dea.io` (import, sto
 from dea.core import Cohort, CohortConfig, Encounter, ProcessingConfig, Rule
 from dea.io import import_path, list_cohorts, load_cohort, save_cohort
 
-__version__ = "2.0.0a1"
+__version__ = "2.0.0a2"
 
 __all__ = [
     "Cohort",

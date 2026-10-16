@@ -57,7 +57,7 @@ def test_dictionary_has_codes() -> None:
 
 
 def test_mimic_import_harmonizes(tmp_path: Path) -> None:
-    root = write_mimic_demo(tmp_path / "mimic", n_stays=20, seed=2)
+    root = write_mimic_demo(tmp_path / "mimic", n_stays=20, seed=2, max_hours=72)
     cohort, report = import_path(root, name="m")
     units = {r.variable: r for r in report.unit_reports}
     assert (

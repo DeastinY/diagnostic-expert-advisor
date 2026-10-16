@@ -50,7 +50,7 @@ def test_write_synthetic_batches_intervals(tmp_path: Path) -> None:
 
 
 def test_mimic_intervals_and_outputs(tmp_path: Path) -> None:
-    root = write_mimic_demo(tmp_path / "mimic", n_stays=8, seed=5)
+    root = write_mimic_demo(tmp_path / "mimic", n_stays=8, seed=5, max_hours=96)
     for rel in ("icu/inputevents", "icu/procedureevents", "icu/outputevents"):
         assert (root / f"{rel}.csv.gz").exists()
     cohort, report = import_path(root, name="m")

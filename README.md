@@ -211,15 +211,17 @@ pytest
 
 ## Status
 
-Alpha. Tested on synthetic data up to 2,000 encounters / 54 million observations (feature table
-in ~3 s, profile in ~4 s, single-encounter lookup in 20 ms, all under 2.5 GB); storage is
-designed for MIMIC-sized cohorts, see [`docs/architecture.md`](docs/architecture.md). The MIMIC
-and FHIR importers are tested on synthetic MIMIC-shaped tables and on DEA's own FHIR export,
-not yet on the real MIMIC demo or a hospital FHIR server. The ICD group definitions and the
-unit conversion table are small and meant to be extended per site. The GLiNER and
-transformer connectors are implemented against their documented APIs but their weights could
-not be downloaded in the development sandbox. The SLURM backend is not yet validated on a real
-cluster.
+Alpha (2.0.0a2). Tested on synthetic data up to 2,000 encounters / 54 million observations
+(feature table in ~3 s, profile in ~4 s, single-encounter lookup in 20 ms, all under 2.5 GB),
+on synthetic MIMIC-IV-shaped tables, and on the SMART on FHIR sample server data (631 Synthea
+patient bundles, 30+ organizations); storage is designed for MIMIC-sized cohorts, see
+[`docs/architecture.md`](docs/architecture.md).
+
+Still to validate, in order of value: a real ICU dataset (the free MIMIC-IV and eICU demos
+need a PhysioNet account, which the development sandbox could not reach), the SLURM backend on
+a real cluster, the GLiNER and transformer NLP connectors with downloaded weights. The ICD
+group definitions, the unit conversion table and the drug list are small and meant to be
+extended per site.
 
 ## License
 
