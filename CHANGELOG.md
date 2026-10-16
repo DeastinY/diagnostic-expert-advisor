@@ -3,6 +3,15 @@
 ## 2.0.0a2
 
 Web app
+- The profile page has a Findings card with the same prioritized list as the import review:
+  tick, apply, done; the suggestions card keeps the rest. "Show the data" under a finding
+  draws the variable's histogram with the plausible range shaded, before and after import.
+- Previews and imports run as background jobs; the wizard shows the stage ("reading
+  icu/chartevents", "converting chartevents.csv.gz, part 3", "checks: plausible ranges") and
+  the elapsed time. The CLI and the Python API see the same stages through
+  `dea.io.progress`.
+- The review remembers the last import of a cohort with the same name: what was applied and
+  what was declined is pre-ticked the same way, with the previous counts for comparison.
 - The review step leads with a one-line verdict, lists the fixes biggest first (severity, then
   share of rows) with the five largest shown and the rest behind "show smaller ones", and
   folds everything without a fix into groups with a preview of the variables.

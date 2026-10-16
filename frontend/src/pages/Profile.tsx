@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useCohort } from "../App";
 import { api, fmt, type Suggestion } from "../api";
 import { AdvisorPanel } from "../components/AdvisorPanel";
+import { Findings, Verdict } from "../components/Findings";
 import { ImportCard } from "../components/ImportCard";
 import { Alert, Card, Kpi, SeverityChip, Spinner, Tabs, toast, useAsync } from "../components/ui";
 import { VegaChart } from "../components/VegaChart";
@@ -10,7 +11,7 @@ const KIND_TITLES: Record<string, string> = {
   harmonize: "Harmonize variable names", static: "Static attributes", drop: "Exclude from processing",
   processing: "Processing defaults", tag: "Clinical tags", filter: "Filters from static data", plot: "Default charts", quality: "Data quality checks",
 };
-const KIND_ORDER = ["quality", "processing", "static", "drop", "harmonize", "tag", "filter", "plot"];
+const KIND_ORDER = ["processing", "static", "drop", "harmonize", "tag", "filter", "plot"]; // quality findings have their own card
 
 export function Profile() {
   const { name, detail, where, reload } = useCohort();
@@ -19,7 +20,9 @@ export function Profile() {
   const ents = useAsync(() => api.entities(name), [name]);
   const pcharts = useAsync(() => api.profileCharts(name, where), [name, where.join("|")]);
   const [tab, setTab] = useState("Variables");
-  const [open, setOpen] = useState<Record<string, boolean>>({ quality: true, processing: true, static: true });
+  const [open, setOpen] = useState<Record<string, boolean>>({ processing: true, static: true });
+  const checks = useAsync(() => api.checks(name), [name]);
+  const [picked, setPicked] = useState<Set<string> | null>(null);
   const [busy, setBusy] = useState(false);
   const groups = useMemo(() => {
     const g: Record<string, Suggestion[]> = {};
@@ -28,7 +31,17 @@ export function Profile() {
   }, [sugg.data]);
   if (!detail) return <Spinner />;
   const p = prof.data;
-  const applicable = (sugg.data ?? []).filter((s) => s.applicable);
+  const applicable = (sugg.data ?? []).filter((s) => s.applicable && s.kind !== "quality");
+  const fixable = (checks.data ?? []).filter((c) => c.action);
+  const selected = picked ?? new Set(fixable.filter((c) => c.recommended).map((c) => c.id));
+  const applyChecks = async () => {
+    setBusy(true);
+    try {
+      const r = await api.applyChecks(name, [...selected]);
+      toast(`Applied ${r.applied.length} fix${r.applied.length === 1 ? "" : "es"}`);
+      setPicked(null); reload(); checks.reload(); sugg.reload(); prof.reload(); pcharts.reload();
+    } catch (e) { toast((e as Error).message); } finally { setBusy(false); }
+  };
   const apply = async (ids: string[]) => {
     setBusy(true);
     try { const r = await api.applySuggestions(name, ids); toast(`Applied ${r.applied.length} suggestion(s)`); reload(); sugg.reload(); prof.reload(); }
@@ -51,10 +64,21 @@ export function Profile() {
             {p.warnings.map((w: string) => <Alert key={w}>{w}</Alert>)}
           </Card>
         )}
+        <Card title={`Findings${checks.data ? ` (${checks.data.length})` : ""}`} actions={
+          <button className="primary sm" disabled={selected.size === 0 || busy} onClick={applyChecks}>Apply {selected.size || ""} fix{selected.size === 1 ? "" : "es"}</button>}>
+          {checks.loading && <Spinner />}
+          {checks.data && (
+            <div className="stack">
+              <Verdict checks={checks.data} fixable={fixable} />
+              <Findings checks={checks.data} total={detail.summary.n_observations} selected={selected} busy={busy} loadHist={(v) => api.hist(name, v)}
+                onToggle={(id, on) => setPicked((prev) => { const n = new Set(prev ?? selected); if (on) n.add(id); else n.delete(id); return n; })} laterNote="Without a fix:" />
+            </div>
+          )}
+        </Card>
         <Card title={`Suggestions${sugg.data ? ` (${sugg.data.length})` : ""}`} actions={
           <button className="primary sm" disabled={applicable.length === 0 || busy} onClick={() => apply(applicable.map((s) => s.id))}>Apply all {applicable.length}</button>}>
           {sugg.loading && <Spinner />}
-          {sugg.data?.length === 0 && <p className="muted">Nothing to suggest. The cohort looks clean.</p>}
+          {sugg.data && groups.length === 0 && <p className="muted">Nothing to suggest. The cohort looks clean.</p>}
           {groups.map(([kind, items]) => {
             const ids = items.filter((s) => s.applicable).map((s) => s.id);
             const isOpen = open[kind] ?? items.length <= 3;

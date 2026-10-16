@@ -52,10 +52,19 @@ to choose one. The guided import then goes through four steps:
    runs the import once more with the ticked fixes and shows what remains, so you can see the
    effect before anything is written. The rest is grouped under "for later" and waits on the
    profile page.
+   "Show the data" under a finding draws the variable's distribution with the plausible range
+   shaded, so a "drop 19 values" decision is made on the picture, not the sentence. If a
+   cohort of the same name was imported before, the choices from then are pre-ticked and the
+   previous counts shown.
 3. **Import.** Writes the cohort with the chosen fixes, each one recorded in `cohort.yaml`.
    Optionally the suggested harmonization (canonical variable names, static attributes, tags,
    processing defaults) is applied in the same go.
-4. **Done.** What was imported, what was fixed, and what is left to look at.
+4. **Done.** What was imported, what was fixed, and what is left to look at. The profile page
+   carries the same findings list afterwards, so the rest can be fixed there in the same way.
+
+Long imports show their stage while they run ("reading icu/chartevents", "converting
+chartevents.csv.gz, part 3 of the gzip", "checks: plausible ranges") together with the time
+elapsed.
 
 For a table you can add a separate static table (one row per encounter with age, sex,
 outcome, hospital, ...) in the "what we found" step, by path or upload. "Apply and check

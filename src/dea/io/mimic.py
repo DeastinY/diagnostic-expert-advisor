@@ -38,6 +38,7 @@ from dea.core.model import (
     Cohort,
     collect,
 )
+from dea.io import progress
 from dea.io.importers import ADMISSION_TIME, ImportReport, harmonize_units
 from dea.standards.icd import diagnosis_table
 
@@ -55,6 +56,8 @@ def _find(root: Path, rel: str) -> Path | None:
 
 def _scan(root: Path, rel: str, required: bool = True) -> pl.LazyFrame | None:
     path = _find(root, rel)
+    if path is not None:
+        progress.report("reading", rel)
     if path is None:
         if required:
             raise FileNotFoundError(f"{rel}.csv[.gz] not found under {root}")
@@ -326,6 +329,7 @@ def import_mimic(path: Path | str, name: str | None = None) -> tuple[Cohort, Imp
         variable_codes=codes,
         filters=[],
     )
+    progress.report("assembling the cohort")
     cohort = Cohort(
         static.drop("outtime").sort(ENCOUNTER_ID),
         pl.concat(dynamics),

@@ -14,6 +14,7 @@ from typing import Any, Literal
 import polars as pl
 
 from dea.core.model import ENCOUNTER_ID, TIME, VALUE, VARIABLE, Cohort, collect
+from dea.io import progress
 from dea.profile import CohortProfile, profile_cohort
 from dea.quality.sites import detect_site_column
 from dea.suggest.units import UnitReport, load_units
@@ -454,13 +455,17 @@ def run_checks(
     unit_reports: list[UnitReport] | None = None,
 ) -> list[Check]:
     """All checks, most severe first."""
+    progress.report("checks", "profiling the variables")
     profile = profile or profile_cohort(cohort)
     concepts = _concepts([v.name for v in profile.variables], skip=cohort.config.unmapped)
     out = unit_checks(unit_reports or [])
+    progress.report("checks", "plausible ranges")
     ranged = range_checks(cohort, concepts)
     out += ranged
     flagged = {v for c in out for v in c.variables}
+    progress.report("checks", "distributions")
     out += cluster_checks(cohort, skip=flagged)
+    progress.report("checks", "duplicates and timing")
     out += structural_checks(cohort, profile)
     out += event_checks(cohort, profile)
     site_col = cohort.config.site_column or detect_site_column(cohort.static)

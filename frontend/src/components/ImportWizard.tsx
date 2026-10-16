@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { api, type Check, type Detection, type ImportReport, type UnitReport } from "../api";
-import { Alert, SeverityChip, Spinner, toast } from "./ui";
+import { useEffect, useRef, useState, type DragEvent } from "react";
+import { api, type Detection, type Hist, type ImportBody, type ImportReport, type Previous } from "../api";
+import { Findings, Verdict, num } from "./Findings";
+import { Alert, Spinner, toast } from "./ui";
 
 /** A file picked from a drop or a folder chooser, with its path relative to what was dropped. */
 export interface Picked { file: File; path: string }
@@ -39,7 +40,6 @@ function fromInput(files: FileList): Picked[] {
 }
 
 const mb = (n: number) => `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`;
-const num = (n: number) => n.toLocaleString();
 
 const FORMAT_TEXT: Record<string, [string, string]> = {
   mimic: ["MIMIC-IV folder", "One encounter per ICU stay. Chart, lab, input, procedure and output events, diagnoses and notes are read; units are converted per row, and ICD-9 and ICD-10 diagnoses become dx_ columns."],
@@ -62,34 +62,6 @@ function Steps({ at }: { at: number }) {
 
 // ---------------------------------------------------------------- review step
 
-/** Where a check comes from, by its id prefix: used to group the list. */
-function family(id: string): string {
-  if (id.startsWith("units")) return "Units";
-  if (id.startsWith("range")) return "Values out of range";
-  if (id.startsWith("cluster")) return "Two value clusters";
-  if (id === "duplicates") return "Duplicates";
-  if (id.startsWith("time")) return "Timing";
-  if (id.startsWith("events-numeric")) return "Numbers stored as text";
-  if (id.startsWith("coverage")) return "Rarely recorded variables";
-  if (id.startsWith("encounters")) return "Encounters";
-  if (id.startsWith("static")) return "Static table";
-  if (id.startsWith("site")) return "Differences between sites";
-  return "Other";
-}
-
-/** One line on what applying a check's fix does. */
-function effect(c: Check): string {
-  const a = c.action ?? {};
-  if ("dedupe" in a) return `removes ${num(c.n)} rows`;
-  if ("drop_time" in a) return `drops ${num(c.n)} rows`;
-  if ("parse" in a) return `parses ${num(c.n)} values`;
-  if ("drop" in a) return `hides ${num((a.drop as string[]).length)} variables`;
-  if ("filter" in a) return "adds a filter";
-  if ("unmap" in a) return "forgets the concept";
-  if ("fix" in a) return (a.fix as { expr: string | null }).expr ? `converts ${num(c.n)} values` : `drops ${num(c.n)} values`;
-  return "";
-}
-
 function Tiles({ r }: { r: ImportReport }) {
   const items: [number, string][] = [[r.n_encounters, "encounters"], [r.n_variables, "variables"], [r.n_observations, "observations"]];
   if (r.n_events) items.push([r.n_events, "events"]);
@@ -97,131 +69,44 @@ function Tiles({ r }: { r: ImportReport }) {
   return <div className="tiles">{items.map(([v, l], i) => <div key={l} className={`tile rise d${i + 1}`}><b>{num(v)}</b><span>{l}</span></div>)}</div>;
 }
 
-function UnitRows({ reports }: { reports: UnitReport[] }) {
-  if (!reports.length) return <p className="small muted">Every variable arrived in one unit DEA knows.</p>;
-  return (
-    <table className="unitrows"><tbody>
-      {reports.map((u) => (
-        <tr key={u.variable}>
-          <td><b>{u.variable}</b></td>
-          <td>
-            {u.skipped ? <span className="muted">left as is, {Object.keys(u.unconvertible).join(", ")} does not fit {u.label || u.canonical}</span> : <>→ {u.label || u.canonical}</>}
-            {Object.entries(u.converted).map(([k, n]) => <span key={k} className="muted"> · {num(n)} rows from {k}</span>)}
-            {!u.skipped && Object.entries(u.unconvertible).map(([k, n]) => <span key={k} className="muted"> · {num(n)} rows in {k} split off as “{u.variable} ({k})”</span>)}
-          </td>
-        </tr>
-      ))}
-    </tbody></table>
-  );
-}
-
-const SEV_W = { error: 3, warning: 2, info: 1 } as const;
-const TOP = 5;
-
-/** Bigger first: severity, then how much of the data a finding touches. */
-function priority(c: Check, total: number): number {
-  const share = total ? Math.min(1, c.n / total) : 0;
-  return SEV_W[c.severity] * 10 + (c.recommended ? 1 : 0) + share * 5 + Math.log10(c.n + 1) / 10;
-}
-
-function share(c: Check, total: number): string {
-  if (!total || !c.n || c.id.startsWith("coverage")) return "";
-  const p = (c.n / total) * 100;
-  return p >= 10 ? `${p.toFixed(0)}% of rows` : p >= 0.1 ? `${p.toFixed(1)}% of rows` : "<0.1% of rows";
-}
-
-function Verdict({ r, fixable }: { r: ImportReport; fixable: Check[] }) {
-  const s = r.summary;
-  const rec = fixable.filter((c) => c.recommended).length;
-  let text: string; let cls: string;
-  if (s.error) { text = `${s.error} thing${s.error === 1 ? "" : "s"} need${s.error === 1 ? "s" : ""} a look before this is useful.`; cls = "danger"; }
-  else if (rec) { text = `Looks usable. ${rec} quick fix${rec === 1 ? " is" : "es are"} recommended, the rest can wait.`; cls = "good"; }
-  else if (fixable.length) { text = "Looks usable. Nothing needs fixing right away; a few optional fixes below."; cls = "good"; }
-  else if (s.warning) { text = "Looks usable. Nothing to fix now; a few things to look at later."; cls = "good"; }
-  else { text = "Clean. Nothing stood out."; cls = "good"; }
-  return <div className={`verdict ${cls} rise`}>{text}</div>;
-}
-
-function Review({ report, selected, onToggle, busy }: { report: ImportReport; selected: Set<string>; onToggle: (id: string, on: boolean) => void; busy: boolean }) {
-  const [showAll, setShowAll] = useState(false);
-  const total = report.n_observations;
-  const fixable = useMemo(() => report.checks.filter((c) => c.action).sort((a, b) => priority(b, total) - priority(a, total)), [report, total]);
-  const later = useMemo(() => report.checks.filter((c) => !c.action && !c.id.startsWith("units:")), [report]); // converted units are in the table below
+function Review({ report, previous, selected, onToggle, busy, loadHist }: { report: ImportReport; previous: Previous | null; selected: Set<string>; onToggle: (id: string, on: boolean) => void; busy: boolean; loadHist: (variable: string) => Promise<Hist> }) {
+  const fixable = report.checks.filter((c) => c.action);
   const s = report.summary;
-  const laterGroups = useMemo(() => {
-    const m = new Map<string, Check[]>();
-    for (const c of later) m.set(family(c.id), [...(m.get(family(c.id)) ?? []), c]);
-    const sev = (list: Check[]) => Math.max(...list.map((c) => SEV_W[c.severity]));
-    return [...m.entries()].sort((a, b) => sev(b[1]) - sev(a[1]) || b[1].length - a[1].length);
-  }, [later]);
-  const shown = showAll ? fixable : fixable.slice(0, TOP);
-  const hidden = fixable.length - shown.length;
-  const hiddenSelected = fixable.slice(TOP).filter((c) => selected.has(c.id)).length;
+  const delta = previous && previous.n_observations != null ? report.n_observations - previous.n_observations : null;
   return (
     <div className="stack">
       <Tiles r={report} />
-      <Verdict r={report} fixable={fixable} />
+      <Verdict checks={report.checks} fixable={fixable} />
       <div className="sevbar rise d2">
         <span><i className="dot error" />{s.error} error{s.error === 1 ? "" : "s"}</span>
         <span><i className="dot warning" />{s.warning} warning{s.warning === 1 ? "" : "s"}</span>
         <span><i className="dot info" />{s.info} info</span>
-        <span className="muted">·</span>
-        <span>{s.units_converted} variable{s.units_converted === 1 ? "" : "s"} with converted units{s.units_split ? `, ${s.units_split} split` : ""}{s.units_skipped ? `, ${s.units_skipped} left as is` : ""}</span>
+        <span>· {s.units_converted} variable{s.units_converted === 1 ? "" : "s"} with converted units{s.units_split ? `, ${s.units_split} split` : ""}{s.units_skipped ? `, ${s.units_skipped} left as is` : ""}</span>
       </div>
-      {report.applied.length > 0 && <div className="applied rise">✓ {report.applied.length} fix{report.applied.length === 1 ? "" : "es"} applied. What is listed below is what remains.</div>}
-      {report.warnings.map((w) => <Alert key={w}>{w}</Alert>)}
-
-      {fixable.length > 0 && (
-        <div className="rise d3">
-          <div className="row spread">
-            <b>Fix now <span className="muted" style={{ fontWeight: 500 }}>({selected.size} of {fixable.length} ticked, biggest first)</span></b>
-            <span className="small muted">Recommended ones are ticked. Everything is recorded in cohort.yaml.</span>
-          </div>
-          <div className="fixes" style={{ marginTop: 8 }}>
-            {shown.map((c) => (
-              <label key={c.id} className={`fix${selected.has(c.id) ? " on" : ""}`}>
-                <input type="checkbox" checked={selected.has(c.id)} disabled={busy} onChange={(e) => onToggle(c.id, e.target.checked)} />
-                <div>
-                  <div className="t"><SeverityChip severity={c.severity} /> {c.title}</div>
-                  <div className="d">{c.detail}</div>
-                </div>
-                <span className="eff"><span className="fam">{family(c.id)}</span>{effect(c)}{share(c, total) ? <span className="muted"> · {share(c, total)}</span> : null}</span>
-              </label>
-            ))}
-          </div>
-          {hidden > 0 && (
-            <button className="ghost sm" style={{ marginTop: 6 }} onClick={() => setShowAll(true)}>
-              Show {hidden} smaller one{hidden === 1 ? "" : "s"}{hiddenSelected ? ` (${hiddenSelected} ticked)` : ""} ↓
-            </button>
-          )}
-          {showAll && fixable.length > TOP && <button className="ghost sm" style={{ marginTop: 6 }} onClick={() => setShowAll(false)}>Show fewer ↑</button>}
+      {previous && (
+        <div className="previous rise">
+          Imported before, on {previous.when.replace("T", " at ")}: {previous.n_encounters != null ? `${num(previous.n_encounters)} encounters, ` : ""}{previous.n_observations != null ? `${num(previous.n_observations)} observations` : ""}{delta != null && delta !== 0 ? ` (${delta > 0 ? "+" : ""}${num(delta)} now)` : ""}.
+          {previous.applied.length ? ` You applied ${previous.applied.length} fix${previous.applied.length === 1 ? "" : "es"} then; the same ones are ticked.` : " You applied no fixes then; the same choice is kept."}
         </div>
       )}
-
-      <div className="later rise d4">
-        {(fixable.length === 0 || later.length > 0) && <div className="small muted" style={{ padding: "4px 0 8px" }}>{fixable.length === 0 ? "Nothing to fix right away. " : ""}For later, on the profile page:</div>}
-        {laterGroups.map(([g, list]) => (
-          <details key={g}>
-            <summary>
-              <SeverityChip severity={list.some((c) => c.severity === "error") ? "error" : list.some((c) => c.severity === "warning") ? "warning" : "info"} />
-              {g}
-              <span className="preview muted">{list.slice(0, 3).map((c) => c.variables[0] ?? c.title).join(", ")}{list.length > 3 ? ", …" : ""}</span>
-              <span className="count">{list.length}</span>
-            </summary>
-            {list.slice(0, 8).map((c) => <div key={c.id} className="item"><b>{c.title}</b><div className="small muted">{c.detail}</div></div>)}
-            {list.length > 8 && <div className="item small muted">and {list.length - 8} more, all on the profile page</div>}
-          </details>
-        ))}
-        <details>
-          <summary>Units: what was converted<span className="count">{report.unit_reports.length}</span></summary>
-          <div style={{ marginTop: 8 }}><UnitRows reports={report.unit_reports} /></div>
-        </details>
-      </div>
+      {report.applied.length > 0 && <div className="applied rise">✓ {report.applied.length} fix{report.applied.length === 1 ? "" : "es"} applied. What is listed below is what remains.</div>}
+      {report.warnings.map((w) => <Alert key={w}>{w}</Alert>)}
+      <Findings checks={report.checks} total={report.n_observations} selected={selected} onToggle={onToggle} busy={busy} loadHist={loadHist} unitReports={report.unit_reports} laterNote="For later, on the profile page:" />
     </div>
   );
 }
 
 // ---------------------------------------------------------------- wizard
+
+function BusyLine({ busy, stage }: { busy: string; stage: { text: string; elapsed: number } | null }) {
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <Spinner label={busy} />
+      {stage && <div className="small muted">{stage.text} · {stage.elapsed < 60 ? `${Math.round(stage.elapsed)} s` : `${Math.floor(stage.elapsed / 60)} min ${Math.round(stage.elapsed % 60)} s`}</div>}
+      <div className="busy-bar" />
+    </div>
+  );
+}
 
 export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: string, where: "overview" | "profile") => void; onMore?: () => void; dropped?: Picked[] | null }) {
   const [step, setStep] = useState(0);
@@ -237,6 +122,8 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
   const [prog, setProg] = useState<{ files: number; of: number; bytes: number; ofBytes: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportReport | null>(null);
+  const [previous, setPrevious] = useState<Previous | null>(null);
+  const [stage, setStage] = useState<{ text: string; elapsed: number } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [harmonize, setHarmonize] = useState(true);
   const [result, setResult] = useState<{ name: string; report: ImportReport; applied: number } | null>(null);
@@ -303,27 +190,50 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
     </label>
   );
 
+  const body = (fixes: string[]): ImportBody => ({ path: staged!, name, static_path: staticPath || null, overrides: ov, fixes });
+
+  /** Run a preview or import as a background job and show its stage while it runs. */
+  const runJob = async <T,>(kind: "preview" | "import", b: ImportBody, label: string): Promise<T> => {
+    setBusy(label); setStage({ text: "starting", elapsed: 0 });
+    const { id } = await api.startJob(kind, b);
+    for (;;) {
+      await new Promise((ok) => setTimeout(ok, 600));
+      const j = await api.job(id);
+      setStage({ text: j.stage + (j.detail ? `: ${j.detail}` : ""), elapsed: j.elapsed });
+      if (j.status === "done") return j.result as T;
+      if (j.status === "error") throw new Error(j.error ?? "failed");
+    }
+  };
+
   /** Run the import without writing, with the fixes applied so far plus the selection. */
   const check = async (fixes: string[], label: string) => {
-    setBusy(label); setErr(null);
+    setErr(null);
     try {
-      const rep = (await api.preview({ path: staged!, name, static_path: staticPath || null, overrides: ov, fixes })).report;
+      const r = await runJob<{ report: ImportReport; previous: Previous | null }>("preview", body(fixes), label);
+      const rep = r.report;
       const known = new Set((preview?.checks ?? []).map((c) => c.id));
-      setPreview(rep);
-      // keep the user's choices for findings that were already listed, tick the recommended among new ones
-      setSelected((prev) => new Set(rep.checks.filter((c) => c.action && (known.has(c.id) ? prev.has(c.id) : c.recommended)).map((c) => c.id)));
+      const first = preview === null;
+      setPreview(rep); setPrevious(r.previous);
+      // first run: what was chosen last time for this cohort, else the recommended ones;
+      // later runs: keep the user's choices for findings already listed, recommended for new ones
+      setSelected((prev) => new Set(rep.checks.filter((c) => {
+        if (!c.action) return false;
+        if (first && r.previous && (r.previous.applied.includes(c.id) || r.previous.declined.includes(c.id))) return r.previous.applied.includes(c.id);
+        return known.has(c.id) ? prev.has(c.id) : c.recommended;
+      }).map((c) => c.id)));
       setStep(2);
-    } catch (e) { fail(e); } finally { setBusy(null); }
+    } catch (e) { fail(e); } finally { setBusy(null); setStage(null); }
   };
   const runChecks = () => check([], "Running the checks…");
   const applied = preview?.applied ?? [];
   const toApply = [...applied, ...selected];
   const recheck = () => check(toApply, `Applying ${selected.size} fix${selected.size === 1 ? "" : "es"} and checking again…`);
+  const loadHist = (variable: string) => api.previewHist({ ...body(applied), variable }); // the state the findings describe
 
   const doImport = async () => {
-    setBusy(toApply.length ? `Applying ${toApply.length} fix${toApply.length === 1 ? "" : "es"} and writing the cohort…` : "Writing the cohort…"); setErr(null);
+    setErr(null);
     try {
-      const r = await api.import({ path: staged!, name, static_path: staticPath || null, overrides: ov, fixes: toApply });
+      const r = await runJob<{ name: string; report: ImportReport }>("import", body(toApply), toApply.length ? `Applying ${toApply.length} fix${toApply.length === 1 ? "" : "es"} and writing the cohort…` : "Writing the cohort…");
       let sugg = 0;
       if (harmonize) {
         setBusy("Applying the suggested harmonization…");
@@ -334,10 +244,10 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
       setResult({ name: r.name, report: r.report, applied: sugg });
       setStep(3);
       toast(`Imported ${r.report.n_encounters} encounters`);
-    } catch (e) { fail(e); } finally { setBusy(null); }
+    } catch (e) { fail(e); } finally { setBusy(null); setStage(null); }
   };
 
-  const reset = () => { setStep(0); setDet(null); setStaged(null); setPreview(null); setResult(null); setOv({}); setErr(null); setSelected(new Set()); setStaticPath(""); };
+  const reset = () => { setStep(0); setDet(null); setStaged(null); setPreview(null); setPrevious(null); setResult(null); setOv({}); setErr(null); setSelected(new Set()); setStaticPath(""); };
   const [fmtTitle, fmtText] = FORMAT_TEXT[det?.format ?? "unknown"] ?? FORMAT_TEXT.unknown;
 
   return (
@@ -445,7 +355,7 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
             </div>
           )}
           <label className="field">Cohort name<input value={name} onChange={(e) => setName(e.target.value.replace(/[^\w.-]+/g, "_"))} /></label>
-          {busy && <div className="stack" style={{ gap: 6 }}><Spinner label={busy} /><div className="busy-bar" /></div>}
+          {busy && <BusyLine busy={busy} stage={stage} />}
           <div className="row spread">
             <button className="ghost" onClick={reset} disabled={!!busy}>← Start over</button>
             <button className="primary" disabled={!name || det.format === "unknown" || !!busy} onClick={runChecks}>Run the checks →</button>
@@ -455,9 +365,9 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
 
       {step === 2 && preview && (
         <div className="stack rise" key="s2">
-          <Review report={preview} selected={selected} busy={!!busy} onToggle={(id, on) => setSelected((prev) => { const n = new Set(prev); if (on) n.add(id); else n.delete(id); return n; })} />
+          <Review report={preview} previous={previous} selected={selected} busy={!!busy} loadHist={loadHist} onToggle={(id, on) => setSelected((prev) => { const n = new Set(prev); if (on) n.add(id); else n.delete(id); return n; })} />
           <label className="row"><input type="checkbox" checked={harmonize} onChange={(e) => setHarmonize(e.target.checked)} /> After the import, also apply the suggested harmonization (canonical variable names, static attributes, tags, processing defaults)</label>
-          {busy && <div className="stack" style={{ gap: 6 }}><Spinner label={busy} /><div className="busy-bar" /></div>}
+          {busy && <BusyLine busy={busy} stage={stage} />}
           <div className="row spread">
             <button className="ghost" onClick={() => setStep(1)} disabled={!!busy}>← Back</button>
             <div className="row">

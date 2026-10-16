@@ -241,3 +241,12 @@ details summary { cursor: pointer; color: var(--ink-2); font-weight: 500; }
 .fix .eff { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .fix .eff .fam { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .later summary .preview { font-size: 12px; margin-left: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 50%; }
+
+.hist { margin-top: 8px; max-width: 460px; }
+.hist .band { fill: var(--accent-soft); }
+.hist .bar { fill: var(--accent); opacity: 0.85; }
+.hist .bar.out { fill: var(--danger, #b42318); opacity: 0.8; }
+.hist .lbl { font-size: 10px; fill: var(--muted); }
+.hist .lbl.mid { fill: var(--ink-2); }
+button.link { padding: 2px 0; color: var(--accent); font-size: 12px; font-weight: 500; }
+.previous { padding: 8px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); font-size: 13px; color: var(--ink-2); }

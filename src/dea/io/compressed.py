@@ -20,6 +20,8 @@ from typing import Any
 
 import polars as pl
 
+from dea.io import progress
+
 BLOCK_BYTES = 256 * 1024 * 1024
 
 
@@ -82,6 +84,7 @@ def scan_compressed_csv(
                 if schema is None:
                     schema = dict(frame.schema)
                 frame.write_parquet(cache / f"part-{i:05d}.parquet")
+                progress.report("converting", f"{Path(path).name}, part {i + 1}")
                 i += 1
         done.write_text(str(i))
     parts = sorted(cache.glob("part-*.parquet"))

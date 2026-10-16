@@ -328,3 +328,56 @@ def test_preview_with_fixes_and_static_table(client, tmp_path):
     assert "age" in detail["static_columns"] and "site" in detail["static_columns"]
     bad = client.post("/api/cohorts/preview", json={**body, "static_path": "/nope.csv"})
     assert bad.status_code == 404
+
+
+def test_jobs_hist_previous_and_checks_apply(client, tmp_path):
+    """A background import reports its stage and ends with the same result as the sync
+    route; a histogram comes with the concept range; the last import's choices are
+    remembered; fixes can be applied to a saved cohort."""
+    import time
+
+    import polars as pl
+
+    rows = []
+    for i in range(40):
+        enc = "abcd"[i % 4]
+        rows += [(enc, i, "HR", 80.0 + i % 7), (enc, i, "HR", 80.0 + i % 7)]
+    pl.DataFrame(
+        {
+            "encounter_id": [r[0] for r in rows],
+            "time": [r[1] for r in rows],
+            "variable": [r[2] for r in rows],
+            "value": [r[3] for r in rows],
+        }
+    ).write_csv(tmp_path / "obs.csv")
+    body = {"path": str(tmp_path / "obs.csv"), "name": "jobby"}
+    job = client.post("/api/jobs/preview", json=body)
+    assert job.status_code == 202
+    jid = job.json()["id"]
+    for _ in range(200):
+        state = client.get(f"/api/jobs/{jid}").json()
+        if state["status"] != "running":
+            break
+        time.sleep(0.05)
+    assert state["status"] == "done", state
+    assert state["result"]["previous"] is None
+    assert {c["id"] for c in state["result"]["report"]["checks"]} >= {"duplicates"}
+    assert client.get("/api/jobs/nope").status_code == 404
+
+    hist = client.post("/api/cohorts/preview/hist", json={**body, "variable": "HR"}).json()
+    assert hist["n"] == 80 and hist["range"] == [20, 250] and hist["bins"]
+    assert hist["concept"] == "Heart rate"
+
+    # import without the fix, declined is remembered; the next preview reports it
+    client.post("/api/cohorts/import", json=body)
+    prev = client.post("/api/cohorts/preview", json=body).json()["previous"]
+    assert prev["applied"] == [] and prev["declined"] == ["duplicates"]
+    assert prev["n_observations"] == 80 and prev["when"]
+
+    # apply the fix on the saved cohort
+    saved = client.get("/api/cohorts/jobby/hist", params={"variable": "HR"}).json()
+    assert saved["n"] == 80
+    r = client.post("/api/cohorts/jobby/checks/apply", json={"ids": ["duplicates"]})
+    assert r.json()["applied"] == ["duplicates"]
+    assert client.get("/api/cohorts/jobby/hist", params={"variable": "HR"}).json()["n"] == 40
+    assert not any(c["id"] == "duplicates" for c in client.get("/api/cohorts/jobby/checks").json())

@@ -38,6 +38,7 @@ from dea.core.model import (
     Cohort,
     collect,
 )
+from dea.io import progress
 
 TimeUnit = Literal["auto", "datetime", "s", "ms", "m", "h", "d"]
 ADMISSION_TIME = "admission_time"
@@ -82,6 +83,7 @@ class ImportReport:
     unit_reports: list[Any] = field(default_factory=list)  # dea.suggest.units.UnitReport
     checks: list[Any] = field(default_factory=list)  # dea.quality.Check
     applied: list[str] = field(default_factory=list)  # ids of the checks whose fix was applied
+    declined: list[str] = field(default_factory=list)  # fixable checks that were left alone
 
     def to_dict(self) -> dict[str, Any]:
         by = {"error": 0, "warning": 0, "info": 0}
@@ -718,10 +720,12 @@ def import_path(
     safe) before the cohort is returned; the checks then run again and ``report.checks``
     holds what is left, ``report.applied`` what was done.
     """
+    progress.report("reading", Path(path).name)
     cohort, report = _import_path(path, name, detection, static_path, **overrides)
     if checks and report.format != "dea":
         from dea.quality import run_checks
 
+        progress.report("running the checks")
         report.checks = run_checks(cohort, unit_reports=report.unit_reports)
         if fixes:
             cohort, report = apply_import_fixes(cohort, report, fixes)
@@ -747,8 +751,10 @@ def apply_import_fixes(
     if not chosen:
         return cohort, report
     out = copy.copy(report)
+    progress.report("applying fixes", f"{len(chosen)} of them")
     fixed = apply_checks(cohort, chosen)
     out.applied = [c.id for c in chosen]
+    progress.report("checking again")
     out.checks = run_checks(fixed, unit_reports=report.unit_reports)
     out.n_observations = fixed.summary().n_observations
     return fixed, out

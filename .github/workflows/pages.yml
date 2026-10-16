@@ -2,7 +2,7 @@ name: Pages
 
 on:
   push:
-    branches: [main, claude/festive-carson-fogtfc]
+    branches: [main]
     paths: ["docs/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 

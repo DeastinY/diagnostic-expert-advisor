@@ -116,18 +116,32 @@ export interface Health {
     update_available: boolean | null; command: string[][] } | null;
 }
 
+export interface Hist { variable: string; label: string; unit: string; n: number; bins: { lo: number; hi: number; count: number }[]; range: [number, number] | null; concept: string | null }
+export interface Previous { applied: string[]; declined: string[]; n_encounters: number | null; n_observations: number | null; when: string }
+export interface PreviewResult { name: string; report: ImportReport; previous: Previous | null }
+export interface Job { id: string; kind: "preview" | "import"; status: "running" | "done" | "error"; stage: string; detail: string; elapsed: number; error: string | null; result?: unknown }
+export type ImportBody = { path: string; name?: string; static_path?: string | null; overrides: Record<string, unknown>; fixes?: string[] };
+
 export const api = {
   health: () => request<Health>("/api/health"),
+  startJob: (kind: "preview" | "import", body: ImportBody) =>
+    request<{ id: string }>(`/api/jobs/${kind}`, { method: "POST", body: JSON.stringify(body) }),
+  job: (id: string) => request<Job>(`/api/jobs/${id}`),
+  previewHist: (body: ImportBody & { variable: string }) =>
+    request<Hist>("/api/cohorts/preview/hist", { method: "POST", body: JSON.stringify(body) }),
+  hist: (name: string, variable: string) => request<Hist>(`/api/cohorts/${name}/hist?variable=${encodeURIComponent(variable)}`),
+  applyChecks: (name: string, ids: string[]) =>
+    request<{ applied: string[] }>(`/api/cohorts/${name}/checks/apply`, { method: "POST", body: JSON.stringify({ ids }) }),
   cohorts: () => request<CohortInfo[]>("/api/cohorts"),
   cohort: (name: string, where: Where = []) => request<CohortDetail>(`/api/cohorts/${name}${qs({}, where)}`),
   deleteCohort: (name: string) => request<void>(`/api/cohorts/${name}`, { method: "DELETE" }),
   demo: (body: { name: string; n: number; mimic: boolean; sites?: number }) =>
     request<{ name: string }>("/api/cohorts/demo", { method: "POST", body: JSON.stringify(body) }),
   detect: (path: string) => request<Detection>("/api/detect", { method: "POST", body: JSON.stringify({ path }) }),
-  import: (body: { path: string; name?: string; static_path?: string | null; overrides: Record<string, unknown>; fixes?: string[] }) =>
+  import: (body: ImportBody) =>
     request<{ name: string; report: ImportReport }>("/api/cohorts/import", { method: "POST", body: JSON.stringify(body) }),
-  preview: (body: { path: string; name?: string; static_path?: string | null; overrides: Record<string, unknown>; fixes?: string[] }) =>
-    request<{ name: string; report: ImportReport }>("/api/cohorts/preview", { method: "POST", body: JSON.stringify(body) }),
+  preview: (body: ImportBody) =>
+    request<PreviewResult>("/api/cohorts/preview", { method: "POST", body: JSON.stringify(body) }),
   checks: (name: string) => request<Check[]>(`/api/cohorts/${name}/checks`),
   sites: (name: string, where: Where, column?: string) =>
     request<SiteComparison>(`/api/cohorts/${name}/sites${qs({ column, dark: isDark() }, where)}`),

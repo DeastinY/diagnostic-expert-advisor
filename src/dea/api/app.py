@@ -15,6 +15,8 @@ import re
 import secrets
 import shutil
 import tempfile
+import threading
+import time
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -29,8 +31,17 @@ from pydantic import BaseModel, Field
 from dea import __version__
 from dea.core import Cohort, FilterError, Rule
 from dea.core.config import ProcessingConfig
+from dea.core.model import VARIABLE, collect
 from dea.core.time import format_duration
-from dea.io import delete_cohort, detect, import_path, list_cohorts, load_cohort, read_table
+from dea.io import (
+    delete_cohort,
+    detect,
+    import_path,
+    list_cohorts,
+    load_cohort,
+    progress,
+    read_table,
+)
 from dea.io.storage import is_cohort_dir
 from dea.profile import profile_cohort
 
@@ -162,6 +173,10 @@ class ImportIn(BaseModel):
     static_path: str | None = None  # a separate static table for a long or wide table
     overrides: dict[str, Any] = Field(default_factory=dict)
     fixes: list[str] = Field(default_factory=list)  # check ids whose fix is applied at import
+
+
+class HistIn(ImportIn):
+    variable: str
 
 
 class DemoIn(BaseModel):
@@ -373,19 +388,44 @@ def create_app(
         except Exception as exc:  # import errors are user errors (bad mapping, bad file)
             raise HTTPException(400, str(exc)) from exc
 
-    @app.post("/api/cohorts/preview")
-    def cohort_preview(body: ImportIn) -> dict[str, Any]:
-        """Import without writing: the report with unit conversions and checks."""
-        cohort, report = _import(body)
-        return {"name": cohort.name, "report": report.to_dict()}
+    def _previous(name: str | None) -> dict[str, Any] | None:
+        """What happened the last time a cohort of this name was imported, if ever."""
+        from dea.io import ImportReport
+        from dea.io.importers import IMPORT_REPORT_FILE
 
-    @app.post("/api/cohorts/import", status_code=201)
-    def cohort_import(body: ImportIn) -> dict[str, Any]:
+        if not name:
+            return None
+        target = store.data_dir / name
+        last = ImportReport.load_dict(target) if is_cohort_dir(target) else None
+        if not last:
+            return None
+        import datetime as dt
+
+        mtime = (target / IMPORT_REPORT_FILE).stat().st_mtime
+        return {
+            "applied": last.get("applied", []),
+            "declined": last.get("declined", []),
+            "n_encounters": last.get("n_encounters"),
+            "n_observations": last.get("n_observations"),
+            "when": dt.datetime.fromtimestamp(mtime).isoformat(timespec="minutes"),
+        }
+
+    def _preview(body: ImportIn) -> dict[str, Any]:
+        cohort, report = _import(body)
+        return {
+            "name": cohort.name,
+            "report": report.to_dict(),
+            "previous": _previous(body.name),
+        }
+
+    def _write(body: ImportIn) -> dict[str, Any]:
         cohort, report = _import(body)
         name = cohort.name
         target = store.data_dir / name
         if target.exists():
             shutil.rmtree(target)
+        report.declined = [c.id for c in report.checks if c.action]
+        progress.report("writing", name)
         cohort.save(target)
         report.save(target)
         store.invalidate(name)
@@ -393,6 +433,130 @@ def create_app(
         for k in [k for k in import_cache if str(body.path) in k]:
             import_cache.pop(k, None)
         return {"name": name, "report": report.to_dict()}
+
+    @app.post("/api/cohorts/preview")
+    def cohort_preview(body: ImportIn) -> dict[str, Any]:
+        """Import without writing: the report with unit conversions and checks."""
+        return _preview(body)
+
+    @app.post("/api/cohorts/import", status_code=201)
+    def cohort_import(body: ImportIn) -> dict[str, Any]:
+        return _write(body)
+
+    # Long imports run as background jobs the browser polls, so it can show the stage.
+    jobs: dict[str, dict[str, Any]] = {}
+    jobs_lock = threading.Lock()
+
+    def _start_job(kind: str, body: ImportIn) -> dict[str, Any]:
+        job_id = secrets.token_hex(8)
+        job = {
+            "id": job_id,
+            "kind": kind,
+            "status": "running",
+            "stage": "starting",
+            "detail": "",
+            "started": time.time(),
+            "result": None,
+            "error": None,
+        }
+        with jobs_lock:
+            jobs[job_id] = job
+            for old in list(jobs)[:-50]:
+                jobs.pop(old, None)
+
+        def on_progress(stage: str, detail: str) -> None:
+            job["stage"], job["detail"] = stage, detail
+
+        def run() -> None:
+            try:
+                with progress.track(on_progress):
+                    job["result"] = _write(body) if kind == "import" else _preview(body)
+                job["status"] = "done"
+            except HTTPException as exc:
+                job["status"], job["error"] = "error", str(exc.detail)
+            except Exception as exc:  # noqa: BLE001 (reported to the caller, never raised)
+                job["status"], job["error"] = "error", str(exc)
+
+        threading.Thread(target=run, name=f"dea-{kind}-{job_id}", daemon=True).start()
+        return {"id": job_id}
+
+    @app.post("/api/jobs/preview", status_code=202)
+    def job_preview(body: ImportIn) -> dict[str, Any]:
+        return _start_job("preview", body)
+
+    @app.post("/api/jobs/import", status_code=202)
+    def job_import(body: ImportIn) -> dict[str, Any]:
+        return _start_job("import", body)
+
+    @app.get("/api/jobs/{job_id}")
+    def job_state(job_id: str) -> dict[str, Any]:
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, "unknown job")
+        out = {k: v for k, v in job.items() if k != "result"}
+        out["elapsed"] = round(time.time() - job["started"], 1)
+        if job["status"] == "done":
+            out["result"] = job["result"]
+        return out
+
+    def _hist(cohort: Cohort, variable: str) -> dict[str, Any]:
+        """Bins of one variable plus the plausible range of its concept, for a small chart."""
+        import numpy as np
+
+        from dea.quality.checks import _concepts
+
+        c = _concepts([variable], skip=cohort.config.unmapped).get(variable)
+        values = (
+            collect(cohort.dynamic.filter(pl.col(VARIABLE) == variable).select(pl.col("value")))
+            .get_column("value")
+            .drop_nulls()
+            .drop_nans()
+        )
+        n = values.len()
+        bins: list[dict[str, Any]] = []
+        if n:
+            arr = values.to_numpy()
+            # the 0.5-99.5 percentile window, widened to the plausible range, so the outlier
+            # cluster that a finding is about stays in the picture
+            lo, hi = float(np.percentile(arr, 0.5)), float(np.percentile(arr, 99.5))
+            if c and c.range:
+                lo, hi = min(lo, float(c.range[0])), max(hi, float(c.range[1]))
+            if hi <= lo:
+                hi = lo + 1.0
+            counts, edges = np.histogram(np.clip(arr, lo, hi), bins=30, range=(lo, hi))
+            bins = [
+                {"lo": float(edges[i]), "hi": float(edges[i + 1]), "count": int(counts[i])}
+                for i in range(len(counts))
+            ]
+        return {
+            "variable": variable,
+            "label": cohort.config.variable_labels.get(variable, variable),
+            "unit": cohort.config.variable_units.get(variable, c.unit if c else ""),
+            "n": int(n),
+            "bins": bins,
+            "range": list(c.range) if c and c.range else None,
+            "concept": c.label if c else None,
+        }
+
+    @app.post("/api/cohorts/preview/hist")
+    def preview_hist(body: HistIn) -> dict[str, Any]:
+        cohort, _ = _import(ImportIn(**body.model_dump(exclude={"variable"})))
+        return _hist(cohort, body.variable)
+
+    @app.get("/api/cohorts/{name}/hist")
+    def cohort_hist(name: str, variable: str) -> dict[str, Any]:
+        return _hist(store.get(name), variable)
+
+    @app.post("/api/cohorts/{name}/checks/apply")
+    def checks_apply(name: str, body: ApplyIn) -> dict[str, Any]:
+        from dea.quality import apply_checks, run_checks
+
+        cohort = store.get(name)
+        chosen = [c for c in run_checks(cohort) if c.action and c.id in set(body.ids)]
+        if chosen:
+            apply_checks(cohort, chosen).save()
+            store.invalidate(name)
+        return {"applied": [c.id for c in chosen]}
 
     @app.get("/api/cohorts/{name}/import")
     def import_report(name: str) -> dict[str, Any]:
@@ -1178,8 +1342,6 @@ def create_app(
         }
 
     if not os.environ.get("DEA_NO_UPDATE_CHECK"):
-        import threading
-
         from dea.update import check
 
         def _check() -> None:
