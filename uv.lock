@@ -648,23 +648,6 @@ deid = [
     { name = "presidio-anonymizer" },
     { name = "spacy" },
 ]
-dev = [
-    { name = "altair" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "openai" },
-    { name = "pandas" },
-    { name = "presidio-analyzer" },
-    { name = "presidio-anonymizer" },
-    { name = "pyarrow" },
-    { name = "pytest" },
-    { name = "python-multipart" },
-    { name = "ruff" },
-    { name = "spacy" },
-    { name = "submitit" },
-    { name = "uvicorn", extra = ["standard"] },
-    { name = "vl-convert-python" },
-]
 nlp-gliner = [
     { name = "gliner" },
 ]
@@ -703,11 +686,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "altair", marker = "extra == 'web'", specifier = ">=5.3" },
-    { name = "dea", extras = ["all"], marker = "extra == 'dev'" },
     { name = "dea", extras = ["web", "ai", "report", "pandas", "slurm", "nlp-spacy", "deid"], marker = "extra == 'all'" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.110" },
     { name = "gliner", marker = "extra == 'nlp-gliner'", specifier = ">=0.2.13" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openai", marker = "extra == 'ai'", specifier = ">=1.50" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.0" },
@@ -716,10 +697,8 @@ requires-dist = [
     { name = "presidio-anonymizer", marker = "extra == 'deid'", specifier = ">=2.2" },
     { name = "pyarrow", marker = "extra == 'pandas'", specifier = ">=15" },
     { name = "pydantic", specifier = ">=2.6" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.9" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "spacy", marker = "extra == 'deid'", specifier = ">=3.7" },
     { name = "spacy", marker = "extra == 'nlp-spacy'", specifier = ">=3.7" },
     { name = "submitit", marker = "extra == 'slurm'", specifier = ">=1.5" },
@@ -728,7 +707,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.29" },
     { name = "vl-convert-python", marker = "extra == 'report'", specifier = ">=1.6" },
 ]
-provides-extras = ["web", "ai", "report", "nlp-spacy", "nlp-gliner", "nlp-transformers", "deid", "pandas", "slurm", "all", "dev"]
+provides-extras = ["web", "ai", "report", "nlp-spacy", "nlp-gliner", "nlp-transformers", "deid", "pandas", "slurm", "all"]
 
 [package.metadata.requires-dev]
 dev = [

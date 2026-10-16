@@ -7,8 +7,8 @@ data/
 __pycache__/
 *.py[cod]
 *.egg-info/
-build/
-dist/
+/build/
+/dist/
 .venv/
 venv/
 .pytest_cache/
@@ -21,9 +21,6 @@ htmlcov/
 .vscode/
 .idea/
 .DS_Store
-
-# Streamlit
-.streamlit/secrets.toml
 
 # submitit / SLURM logs
 logs/
