@@ -46,6 +46,14 @@ under three seconds. Things learned from it that changed the code:
 
 The full 631 bundles import in about a minute; `dea sites` then compares 70+ organizations.
 
+## Full-size MIMIC-IV
+
+Gzipped tables above 64 MB (`chartevents`, `inputevents`, `labevents`) are converted once,
+in 256 MB blocks, to Parquet parts in a cache directory (`$DEA_CACHE_DIR`, else `.dea_cache`
+next to the data, else the temp directory) and scanned lazily from there, so the import never
+holds a full table in memory. The conversion is the slow part of a first import (minutes for
+chartevents); every later import of the same files reuses the parts.
+
 ## PhysioNet data
 
 All PhysioNet sets share the same route: create an account at https://physionet.org, complete
