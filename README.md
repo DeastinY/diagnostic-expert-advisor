@@ -1,227 +1,118 @@
 # Diagnostic Expert Advisor (DEA)
 
-[![CI](https://github.com/JRC-COMBINE/DEA/actions/workflows/ci.yml/badge.svg)](https://github.com/JRC-COMBINE/DEA/actions/workflows/ci.yml)
+[![CI](https://github.com/DeastinY/diagnostic-expert-advisor/actions/workflows/ci.yml/badge.svg)](https://github.com/DeastinY/diagnostic-expert-advisor/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)
-![License](https://img.shields.io/github/license/jrc-combine/dea)
+![License](https://img.shields.io/badge/license-GPLv3-blue)
 
-DEA turns heterogeneous clinical time-series data into one structure and gives you
-profiles, suggestions, views and analysis-ready frames in minutes.
+A workbench for clinical time series. Import hospital data in whatever layout it comes in,
+get it checked and harmonized to standards, look at every patient and every site, and hand a
+clean table to your models.
 
-- **For clinicians:** drop in a table or a folder of CSVs, get a cohort overview, per-encounter
-  views and a data-quality profile without writing code.
-- **For researchers:** the same cohort as a Polars or pandas frame, an encounter-level feature
-  matrix, configurable filters, and one `apply()` call that runs locally today and on a SLURM
-  cluster tomorrow.
-- **Optional AI advisor:** recommendations on how to resample, fill and store the data, from
-  any OpenAI-compatible endpoint, computed from aggregate statistics only.
+- **Import anything:** CSV/Parquet tables (long or wide), MIMIC-IV, FHIR R4 bundles, the v1 CSV tree.
+- **Check and harmonize:** mixed units, implausible values, duplicates and site differences are
+  caught before anything is written. Variables map to LOINC/UCUM, diagnoses to ICD-9/ICD-10
+  groups, drugs to RxNorm/ATC.
+- **Look:** cohort overview, per-site comparison, per-encounter time series with the cohort
+  band behind them, data-quality profile, HTML report.
+- **Model:** one call gives an encounter-level `(X, y)` with a prediction cutoff, a leakage guard
+  and a split by encounter, patient or whole hospital.
+- **Optional AI advisor** on any OpenAI-compatible endpoint. It only ever sees aggregate statistics.
 
-
-> DEA v2 is a clean rewrite: Polars and Parquet underneath, a FastAPI backend and a React
-> frontend on top. The v1 Flask application lives in the git history; its CSV layout can still
-> be imported.
+Everything runs locally on Polars and Parquet; a MIMIC-sized cohort fits a laptop.
 
 ## Install
 
-```bash
-pip install "dea[all] @ git+https://github.com/JRC-COMBINE/DEA.git"
-# or, from a clone:
-pip install -e ".[all]"
-```
-
-Extras: `web` (FastAPI backend serving the web app), `ai` (advisor over any OpenAI-compatible
-endpoint), `report` (offline HTML reports with embedded SVG charts), `nlp-spacy`, `nlp-gliner`,
-`nlp-transformers`, `deid` (local NLP connectors), `pandas` (pandas interop), `slurm` (cluster
-backend). The core needs only Polars, pydantic
-and PyYAML.
-
-## Five-minute tour
+With [uv](https://docs.astral.sh/uv/) (recommended):
 
 ```bash
-dea synth data/demo --n 60      # a synthetic ICU cohort; no real patients involved
-dea suggest data/demo           # harmonization, processing, tags, quality findings
-dea serve --data-dir data       # web app at http://127.0.0.1:8000
+git clone https://github.com/DeastinY/diagnostic-expert-advisor.git dea && cd dea
+uv sync --all-extras          # core + web app, advisor, reports, NLP, pandas, SLURM
+uv run dea --help
 ```
 
-Have your own data? `dea detect my_export.csv` shows what DEA recognizes, then
+With pip: `pip install -e ".[all]"` from the clone, or just `pip install -e ".[web]"` for the
+app. The core needs only Polars, pydantic and PyYAML.
+
+The web frontend is prebuilt in `frontend/dist`; rebuild it with `npm ci && npm run build`
+inside `frontend/` after changing it.
+
+## Get started
 
 ```bash
-dea import my_export.csv data/my_cohort            # long or wide tables, csv/tsv/parquet
-dea import /path/to/mimic-iv-demo data/mimic       # MIMIC-IV layout (icu/, hosp/, note/)
-dea import /path/to/v1/cohort data/migrated        # the DEA v1 static.csv + <id>/dynamic.csv tree
+uv run dea synth data/demo --n 60 --sites 3   # synthetic ICU cohort over three hospitals
+uv run dea serve --data-dir data               # http://127.0.0.1:8000
 ```
 
-
-## The web app
-
-`dea serve` starts a FastAPI backend and serves the React frontend (built into
-`frontend/dist`; run `npm install && npm run build` in `frontend/` from a checkout).
-
-- **Cohorts**: cards with lineage, import from a path or an upload with layout detection and
-  editable column mapping, or a demo cohort (optionally in MIMIC-IV layout).
-- **Overview**: stay lengths, coverage, tags, static and variable distributions, and
-  **trajectories** (median and interquartile band since admission, split by any static column).
-  Filters live in the URL, so every view is shareable.
-- **Encounters**: sortable, searchable list with tags; per-encounter small multiples and events.
-- **Build cohort**: condition builder over the feature catalog with live counts, save as filter
-  or tag, carve out a **sub-cohort** with its parent and rule recorded.
-- **Profile & suggestions**: sampling, coverage, distributions, red flags; grouped one-click
-  suggestions (harmonize names, move static attributes, processing defaults, clinical tags,
-  filters, charts, data quality); processing editor; optional AI advisor; entities from NLP.
-- **Report** and **Parquet export** of any filtered view.
-
-## MIMIC-IV
-
-`dea import <mimic-root>` reads the PhysioNet layout (`icu/icustays`, `icu/chartevents`,
-`icu/d_items`, `hosp/patients`, `hosp/admissions`, `hosp/labevents`, `hosp/d_labitems`,
-`hosp/diagnoses_icd`, `hosp/d_icd_diagnoses`, optional `note/discharge`): one encounter per
-ICU stay, items named by their dictionary labels, text values as events, labs attached to the
-stay window, per-row units (`valueuom`) normalized, ICD-9/ICD-10 diagnoses as `dx_<group>`
-columns. `dea synth out --mimic --n 50` writes synthetic tables in the same layout (including
-MIMIC's °F/°C temperature items and mixed ICD versions) for development without credentials.
-
-## To a model
-
-`dea ml data/icu out.parquet --label "Severe ARDS" --cutoff 24 --split site` writes one row per
-encounter with features from before the cutoff only, a whole-stay label and a split that holds
-out whole hospitals; outcome and label columns are dropped. The same lives in the web app's
-cohort builder and in `dea.ml.make_dataset`. See [`docs/ml.md`](docs/ml.md).
-
-## Public data
-
-Tested on DEA's own synthetic cohorts and on the SMART on FHIR sample server data (631 Synthea
-patient bundles, FHIR R4, 30+ organizations). [`docs/datasets.md`](docs/datasets.md) lists the
-open ICU datasets (MIMIC-IV demo, eICU, HiRID, PhysioNet challenges) and how each one feeds in.
-
-## Checks and harmonization
-
-Every import runs data quality checks before anything is written: mixed units (converted on
-the spot, with a report), values outside hard physiological limits with the unit that would
-explain them, two-cluster distributions, duplicates, time offsets before admission or months
-after it, empty encounters, numbers stored as text. `dea check <cohort>`, the "Check first"
-button on the import form and the profile page show them; fixes apply with one click and are
-recorded in `cohort.yaml`.
-
-Pooled cohorts get a site dimension: per-site distributions, coverage and sampling grids are
-compared on the overview page, and site-specific units, shifts and missing variables become
-findings with site-restricted fixes (`dea sites <cohort>`, `dea synth out --sites 3` for a demo).
-
-Measurements harmonize through the dictionary's LOINC and UCUM codes, diagnoses through
-cross-version ICD groups (`dx_sepsis`, `dx_heart_failure`, ...), and cohorts import from and
-export to FHIR R4 (`dea export <cohort> <dir> --fhir`). See
-[`docs/harmonization.md`](docs/harmonization.md).
-
-## Free text: local NLP connectors
+With your own export:
 
 ```bash
-dea nlp list                                      # which connectors are installed
-dea nlp install spacy --model en_core_web_sm      # models go to DEA_MODELS_DIR (~/.dea/models)
-dea nlp run data/demo --connector spacy --events Note
-dea nlp run data/demo --connector gliner --labels disease medication procedure
-dea nlp run data/demo --connector presidio        # PII detection; redaction via dea.nlp.redact_cohort
+uv run dea detect my_export.csv                # what DEA recognizes: layout, columns, time unit
+uv run dea import my_export.csv data/mine      # runs the checks, writes the cohort
+uv run dea check data/mine                     # findings again, any time
+uv run dea suggest data/mine --apply           # harmonization, tags, processing defaults
 ```
 
-Connectors: spaCy (any pipeline, including scispaCy and medspaCy), GLiNER zero-shot NER,
-Hugging Face token classification, Presidio de-identification, and any OpenAI-compatible local
-LLM such as Ollama. All run locally; entities land in `derived/entities.parquet`, feed the
-Entities tab, and can become `mentions: <entity>` tags. Note that the default `torch` wheel is
-the CUDA build; install the CPU wheel from the PyTorch index if you do not have a GPU.
+Step-by-step instructions for your own data, for MIMIC-IV (including how to get access) and
+for FHIR are in [`docs/getting-started.md`](docs/getting-started.md).
 
-## Sharing an instance
+## MIMIC-IV in three commands
 
-`dea serve` is single-user by default. Set `DEA_TOKEN=<secret>` to require a bearer token on
-every API call (the web app asks for it once and remembers it in the browser); put a TLS
-proxy in front for anything beyond a trusted network. The report (`dea report`) now carries
-the data quality checks, the per-site case mix and findings, and the sub-cohorts derived from
-a cohort, and the encounter view draws the cohort's median and interquartile band behind each
-patient's series.
+```bash
+# after PhysioNet credentialing, see docs/getting-started.md
+wget -r -N -c -np --user YOU --ask-password https://physionet.org/files/mimic-iv-demo/2.2/
+uv run dea import physionet.org/files/mimic-iv-demo/2.2 data/mimic
+uv run dea serve --data-dir data
+```
 
-## In Python
+The importer reads `icu/` (stays, chart, input, procedure and output events), `hosp/`
+(patients, admissions, labs, diagnoses) and `note/`; units are normalized per row, °F and °C
+items merge, ICD-9 and ICD-10 diagnoses become `dx_<group>` columns. Full MIMIC-IV works the
+same way; large gzipped tables are converted to Parquet once.
+
+## Python
 
 ```python
-import dea
+from dea.io import load_cohort
+from dea.ml import make_dataset
 
-cohort = dea.load_cohort("data/demo")
-cohort.summary()                       # encounters, variables, observations, length of stay
-cohort.features()                      # one row per encounter: static + <variable>__min|max|mean|...
-severe = cohort.filter('"Horowitz__min" < 100 AND los_hours > 24')
-
-enc = cohort.get("ICU-2021-48213")
-enc.wide(every="15m", fill="forward")  # time x variables, Polars
-enc.series("MAP")                      # raw observations of one variable
-
-frame = cohort.wide(every="1h", fill="forward", with_static=True)   # for ML, all encounters
-pdf = frame.to_pandas()                                             # or stay in Polars
-
-from dea.compute import LocalBackend
-cohort.apply(my_function, backend=LocalBackend(), name="my_result")  # -> derived/my_result.parquet
-
-cohort.trajectory("MAP", every="4h", by="outcome")        # cohort-level course of a variable
-cohort.export_wide("wide/", every="1h", fill="forward")  # bucket-by-bucket, bounded memory
-cohort.rename_variables({"HF": "heart_rate"}).save()     # harmonize names; config follows
+cohort = load_cohort("data/mimic")
+cohort.features()                         # one row per encounter, aggregates + static columns
+cohort.filter('"lactate__max" > 2')       # any SQL rule over that table
+ds = make_dataset(cohort, label="Severe ARDS", cutoff_hours=24, split="site")
+X, y = ds.train()
 ```
 
-## How it fits together
+`cohort.wide()` gives the resampled time series as a Polars (or pandas) frame;
+`cohort.apply(fn)` runs per-encounter code on the local or SLURM backend.
 
-| Layer | What it does |
+## Documentation
+
+| | |
 |---|---|
-| `dea.core` | `Encounter`, `Cohort`, `CohortConfig` on Polars; long-format observations, static table, resampling |
-| `dea.io` | detect & import long/wide tables and the v1 CSV tree; Parquet storage |
-| `dea.profile` | deterministic profiling: sampling intervals, coverage, distributions, red flags |
-| `dea.compute` | `SerialBackend`, `LocalBackend`, `SlurmBackend` behind one `map()` contract |
-| `dea.advise` | optional advisor over an OpenAI-compatible API; input is the profile, never rows |
-| `dea.ui` | Streamlit app: Cohorts, Overview, Encounters, Profile & Advice, Compute |
-| `dea.synth` | synthetic ICU cohorts for demos and tests |
-
-Everything domain specific (filters such as *Severe ARDS*, tags, default plots, labels, units,
-processing defaults) lives in the cohort's `cohort.yaml`, not in code:
-
-```yaml
-filters:
-  - label: Severe ARDS
-    where: '"Horowitz__min" < 100'
-processing:
-  resample_every: 15m
-  aggregate: mean
-  fill: forward
-```
-
-More in [`docs/architecture.md`](docs/architecture.md), [`docs/data-formats.md`](docs/data-formats.md),
-[`docs/ai-advisor.md`](docs/ai-advisor.md) and [`docs/hpc.md`](docs/hpc.md).
-
-## AI advisor
-
-```bash
-export DEA_AI_BASE_URL=http://localhost:11434/v1   # e.g. Ollama; or leave unset for OpenAI
-export DEA_AI_MODEL=llama3.1
-dea advise data/demo --show-payload                # see exactly what would be sent
-dea advise data/demo --apply                       # write the recommendation into cohort.yaml
-```
-
-The advisor receives `CohortProfile.to_prompt_dict()`: counts, sampling statistics and
-per-column aggregates. No encounter ids, timestamps or individual values ever leave the
-machine, and nothing changes until you apply a recommendation.
+| [getting-started.md](docs/getting-started.md) | own data, MIMIC-IV access and import, FHIR, uv workflow |
+| [data-formats.md](docs/data-formats.md) | the long data model, intervals, the Parquet layout, config |
+| [harmonization.md](docs/harmonization.md) | checks, units, LOINC, ICD groups, mapping files, FHIR, sites |
+| [ml.md](docs/ml.md) | datasets for modelling: label, cutoff, split, leakage guard |
+| [architecture.md](docs/architecture.md) | storage decisions, benchmarks, result cache |
+| [ai-advisor.md](docs/ai-advisor.md), [nlp.md](docs/nlp.md), [hpc.md](docs/hpc.md) | advisor, local NLP connectors, SLURM |
+| [datasets.md](docs/datasets.md) | public datasets and what each one exercises |
+| [docs/index.html](docs/index.html) | project landing page (serve `docs/` with GitHub Pages) |
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-ruff check src tests && ruff format --check src tests
-pytest
+uv sync --all-extras
+uv run pytest -q              # ~1 min
+uv run ruff check src tests && uv run ruff format src tests
+DEA_TOKEN=secret uv run dea serve   # bearer-token protection for a shared instance
 ```
 
 ## Status
 
-Alpha (2.0.0a2). Tested on synthetic data up to 2,000 encounters / 54 million observations
-(feature table in ~3 s, profile in ~4 s, single-encounter lookup in 20 ms, all under 2.5 GB),
-on synthetic MIMIC-IV-shaped tables, and on the SMART on FHIR sample server data (631 Synthea
-patient bundles, 30+ organizations); storage is designed for MIMIC-sized cohorts, see
-[`docs/architecture.md`](docs/architecture.md).
-
-Still to validate, in order of value: a real ICU dataset (the free MIMIC-IV and eICU demos
-need a PhysioNet account, which the development sandbox could not reach), the SLURM backend on
-a real cluster, the GLiNER and transformer NLP connectors with downloaded weights. The ICD
-group definitions, the unit conversion table and the drug list are small and meant to be
-extended per site.
+Alpha (2.0.0a2). Validated on synthetic cohorts up to 2,000 encounters / 54 million
+observations, on synthetic MIMIC-IV-shaped tables, and on the SMART on FHIR sample data
+(631 Synthea patients, 30+ organizations). Still to validate: a real ICU dataset, the SLURM
+backend on a cluster, the GLiNER/transformer NLP connectors with downloaded weights.
 
 ## License
 
