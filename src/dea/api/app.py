@@ -11,6 +11,7 @@ import functools
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import tempfile
@@ -445,9 +446,14 @@ def create_app(
             source = inner[0] if len(inner) == 1 and inner[0].is_dir() else base / "unzipped"
         detection = _detected(source)
         n_files = sum(1 for p in source.rglob("*") if p.is_file()) if source.is_dir() else 1
+        found = Path(detection["source"])
+        # a name with letters in it: what was dropped, else the folder the data was found in,
+        # else the layout ("2.2" or "v3" alone would make a poor cohort name)
+        candidates = [name, source.stem if source != base else "", found.stem, detection["format"]]
+        chosen = next((c for c in candidates if c and re.search(r"[A-Za-z]", c)), "upload")
         return {
             "staged": detection["source"],
-            "name": name or (source.stem if source != base else "upload"),
+            "name": chosen,
             "n_files": n_files,
             "detection": detection,
         }

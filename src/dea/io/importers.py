@@ -251,8 +251,34 @@ def detect_table(df: pl.DataFrame, source: Path | str = "<frame>") -> Detection:
     return det
 
 
-def detect(path: Path | str) -> Detection:
-    """Inspect a path and guess how to import it."""
+_DESCEND = 4  # how many directory levels below a dropped folder are searched for a layout
+
+
+def _detect_below(root: Path, depth: int) -> Detection | None:
+    """A recognizable layout somewhere below ``root``, at most ``depth`` levels down.
+
+    A wget mirror of PhysioNet, a zip that unpacks into a wrapper folder or a dropped parent
+    directory all put the real data a few levels down; the first MIMIC-IV, FHIR, v1 tree or
+    DEA cohort found wins, a lone table only if nothing else turns up.
+    """
+    if depth <= 0:
+        return None
+    table: Detection | None = None
+    for d in sorted(x for x in root.iterdir() if x.is_dir() and not x.name.startswith(".")):
+        det = detect(d, _depth=depth - 1)
+        if det.format in ("dea", "mimic", "fhir", "csv_tree"):
+            return det
+        if det.format == "table" and table is None:
+            table = det
+    return table
+
+
+def detect(path: Path | str, *, _depth: int = _DESCEND) -> Detection:
+    """Inspect a path and guess how to import it.
+
+    For a directory that holds nothing recognizable itself, a few levels below are searched
+    too, so a dropped parent folder or a PhysioNet mirror still resolves to the data inside.
+    """
     p = Path(path)
     from dea.io.storage import is_cohort_dir  # local import to avoid a cycle at module load
 
@@ -274,8 +300,15 @@ def detect(path: Path | str) -> Detection:
         tables = sorted(x for x in p.iterdir() if x.suffix.lower() in (".csv", ".tsv", ".parquet"))
         if len(tables) == 1:
             return detect(tables[0])
+        nested = _detect_below(p, _depth)
+        if nested is not None:
+            return nested
+        seen = sorted(x.name + ("/" if x.is_dir() else "") for x in p.iterdir())
+        shown = ", ".join(seen[:8]) + (", ..." if len(seen) > 8 else "")
         return Detection(
-            source=p, format="unknown", notes=["directory holds no recognizable layout"]
+            source=p,
+            format="unknown",
+            notes=["directory holds no recognizable layout", f"it contains: {shown or 'nothing'}"],
         )
     if not p.exists():
         raise FileNotFoundError(p)

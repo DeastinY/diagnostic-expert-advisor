@@ -157,3 +157,23 @@ def test_read_table_formats(tmp_path: Path) -> None:
     df.write_parquet(tmp_path / "t.parquet")
     for name in ("t.csv", "t.tsv", "t.parquet"):
         assert read_table(tmp_path / name).equals(df)
+
+
+def test_detect_finds_layout_below_a_dropped_parent(tmp_path: Path) -> None:
+    """A PhysioNet mirror dropped at its top level resolves to the MIMIC folder inside."""
+    from dea.io.importers import detect
+    from dea.synth import write_mimic_demo
+
+    data = tmp_path / "physionet.org" / "files" / "mimic-iv-demo" / "2.2"
+    write_mimic_demo(data, n_stays=4)
+    for d in (tmp_path / "physionet.org", data.parent, data, data / "icu"):
+        (d / "index.html").write_text("<html></html>")  # wget leaves these everywhere
+    (tmp_path / "physionet.org" / "robots.txt").write_text("")
+    det = detect(tmp_path / "physionet.org")
+    assert det.format == "mimic" and Path(det.source) == data
+    # too deep is left alone, and the notes say what was there
+    deep = tmp_path / "a" / "b" / "c" / "d" / "e" / "f"
+    deep.mkdir(parents=True)
+    (deep / "x.csv").write_text("encounter_id,time,v\n1,0,1\n")
+    unknown = detect(tmp_path / "a")
+    assert unknown.format == "unknown" and any("it contains: b/" in n for n in unknown.notes)
