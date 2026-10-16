@@ -184,3 +184,22 @@ def test_sites_endpoint(client: TestClient) -> None:
     assert r.json()["site_column"] == "outcome"
     assert client.get("/api/cohorts/multi/sites").json()["column"] == "outcome"
     assert client.put("/api/cohorts/multi/site", json={"column": "nope"}).status_code == 400
+
+
+def test_result_cache_invalidates_on_save(client: TestClient) -> None:
+    from pathlib import Path
+
+    data_dir = Path(client.get("/api/health").json()["data_dir"])
+    cache = data_dir / "unit" / "derived" / "cache"
+    r1 = client.get("/api/cohorts/unit/profile").json()
+    files = sorted(cache.glob("profile-*.json"))
+    assert len(files) == 1
+    r2 = client.get("/api/cohorts/unit/profile").json()
+    assert r2 == r1 and sorted(cache.glob("profile-*.json")) == files
+    client.get("/api/cohorts/unit/profile?where=los_hours+%3E+0")
+    assert len(list(cache.glob("profile-*.json"))) == 2  # different params, different entry
+    # a save changes the signature; the next call recomputes and drops the stale entries
+    client.put("/api/cohorts/unit/processing", json={"resample_every": "30m"})
+    client.get("/api/cohorts/unit/profile").json()
+    names = [f.name for f in cache.glob("profile-*.json")]
+    assert len(names) == 1 and names[0] not in {f.name for f in files}
