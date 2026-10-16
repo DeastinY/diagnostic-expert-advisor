@@ -56,6 +56,15 @@ def _cmd_import(args: argparse.Namespace) -> int:
         if getattr(args, k, None)
     }
     cohort, report = import_path(args.source, name=args.name, static_path=args.static, **overrides)
+    if args.mapping:
+        from dea.standards.mapping import apply_mapping, load_mapping, load_units, mapping_report
+
+        mapping = load_mapping(args.mapping)
+        info = mapping_report(cohort, mapping)
+        cohort = apply_mapping(cohort, mapping, load_units(args.mapping))
+        report.mapping["site_mapping"] = (
+            f"{len(info['applied'])} applied, {len(info['unused'])} unused"
+        )
     cohort.save(args.out)
     report.save(args.out)
     for line in report.summary_lines():
@@ -141,10 +150,22 @@ def _cmd_advise(args: argparse.Namespace) -> int:
 def _cmd_rename(args: argparse.Namespace) -> int:
     from dea.io import load_cohort
 
-    mapping = dict(pair.split("=", 1) for pair in args.mapping)
-    cohort = load_cohort(args.cohort).rename_variables(mapping)
+    cohort = load_cohort(args.cohort)
+    if args.mapping_file:
+        from dea.standards.mapping import apply_mapping, load_mapping, load_units, mapping_report
+
+        mapping = load_mapping(args.mapping_file)
+        info = mapping_report(cohort, mapping)
+        cohort = apply_mapping(cohort, mapping, load_units(args.mapping_file))
+        print(
+            f"applied {len(info['applied'])}, unused {len(info['unused'])}, "
+            f"still unmapped {len(info['unmapped'])}"
+        )
+    else:
+        mapping = dict(pair.split("=", 1) for pair in args.mapping)
+        cohort = cohort.rename_variables(mapping)
     cohort.save()
-    print(f"renamed {len(mapping)} variable(s); variables now: {', '.join(cohort.variables)}")
+    print(f"variables now: {', '.join(cohort.variables)}")
     return 0
 
 
@@ -316,6 +337,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--variable-col")
     p.add_argument("--value-col")
     p.add_argument("--unit-col", help="per-row unit column of a long table")
+    p.add_argument(
+        "--mapping", help="site mapping YAML (local names -> concepts), applied on import"
+    )
     p.add_argument("--time-unit", choices=["auto", "datetime", "s", "ms", "m", "h", "d"])
     p.add_argument("--table-kind", choices=["long", "wide"])
     p.set_defaults(func=_cmd_import)
@@ -357,7 +381,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("rename", help="rename variables, e.g. dea rename data/c HF=heart_rate")
     p.add_argument("cohort")
-    p.add_argument("mapping", nargs="+", metavar="OLD=NEW")
+    p.add_argument("mapping", nargs="*", metavar="OLD=NEW")
+    p.add_argument("--mapping-file", help="site mapping YAML instead of OLD=NEW pairs")
     p.set_defaults(func=_cmd_rename)
 
     p = sub.add_parser(

@@ -13,6 +13,7 @@ import yaml
 _DICT_PATH = Path(__file__).with_name("dictionary.yaml")
 _NORMALIZE = re.compile(r"[\s_\-./()\[\],:]+")
 _PAREN = re.compile(r"\(.*?\)")
+_SUFFIX = re.compile(r"\b(infusion|rate|drip|dose|dosage|administration|continuous)\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class Concept:
     synonyms: tuple[str, ...] = field(default_factory=tuple)
     loinc: str = ""
     ucum: str = ""
+    rxnorm: str = ""
+    atc: str = ""
 
 
 def normalize(text: str) -> str:
@@ -40,7 +43,7 @@ class Dictionary:
         self.by_loinc = {c.loinc: c for c in concepts if c.loinc}
         self._index: dict[str, Concept] = {}
         for c in concepts:
-            for s in (c.name, c.label, c.loinc, *c.synonyms):
+            for s in (c.name, c.label, c.loinc, c.rxnorm, c.atc, *c.synonyms):
                 if s:
                     self._index.setdefault(normalize(s), c)
 
@@ -52,6 +55,9 @@ class Dictionary:
         bare = normalize(_PAREN.sub("", variable))
         if bare in self._index:
             return self._index[bare], 0.97
+        stripped = _SUFFIX.sub("", bare).strip()  # "norepinephrine infusion rate" -> drug
+        if stripped and stripped != bare and stripped in self._index:
+            return self._index[stripped], 0.95
         best: tuple[Concept, float] | None = None
         for syn, concept in self._index.items():
             score = SequenceMatcher(None, key, syn).ratio()
@@ -74,6 +80,8 @@ def load_dictionary(path: Path | None = None) -> Dictionary:
             synonyms=tuple(str(s) for s in e.get("synonyms", [])),
             loinc=str(e.get("loinc", "") or ""),
             ucum=str(e.get("ucum", "") or ""),
+            rxnorm=str(e.get("rxnorm", "") or ""),
+            atc=str(e.get("atc", "") or ""),
         )
         for e in raw
     ]

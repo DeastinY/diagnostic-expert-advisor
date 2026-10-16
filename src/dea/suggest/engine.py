@@ -72,7 +72,8 @@ def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Sugges
     cfg = cohort.config
     out: list[Suggestion] = []
     by_name = {v.name: v for v in profile.variables}
-    matches = _matches(list(by_name))
+    interval_vars = cohort.interval_variables
+    matches = _matches(list(by_name) + interval_vars)
     canonical_present = {c.name for c, _ in matches.values()}
 
     # 1. harmonization
@@ -193,9 +194,31 @@ def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Sugges
     # 5. tags from standard thresholds (use current variable names)
     existing = {r.label for r in cfg.tags} | {r.label for r in cfg.filters}
     concept_to_var = {c.name: v for v, (c, _) in matches.items()}
+    for var in interval_vars:  # interventions: "received X" tags from their duration
+        concept = matches.get(var, (None, 0))[0]
+        label = f"Received {(concept.name if concept else var).replace('_', ' ').lower()}"
+        if label in existing:
+            continue
+        out.append(
+            Suggestion(
+                id=f"tag:{label}",
+                kind="tag",
+                title=f"Tag '{label}'",
+                detail=f"Any episode of {var} during the stay.",
+                action={
+                    "tag": {
+                        "label": label,
+                        "where": f'"{var}__hours" > 0',
+                        "description": f"At least one {var} episode",
+                    }
+                },
+                variables=[var],
+            )
+        )
+        existing.add(label)
     for concept_name, label, agg, op, threshold, desc in CLINICAL_TAGS:
         var = concept_to_var.get(concept_name)
-        if not var or label in existing:
+        if not var or label in existing or var in interval_vars:
             continue
         out.append(
             Suggestion(
@@ -252,9 +275,10 @@ def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Sugges
 
     # 6. default plots
     if not cfg.plots:
+        observed = {v: m for v, m in matches.items() if v in by_name}  # not intervals
         plots = [
             v
-            for v, (c, _) in sorted(matches.items(), key=lambda kv: -by_name[kv[0]].n_observations)
+            for v, (c, _) in sorted(observed.items(), key=lambda kv: -by_name[kv[0]].n_observations)
             if c.role in PLOT_ROLES
         ][:8]
         if plots:

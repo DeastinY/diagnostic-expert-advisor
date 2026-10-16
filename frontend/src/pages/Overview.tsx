@@ -120,6 +120,12 @@ function SitesCard({ name, where, configured, onChange }: { name: string; where:
         {(d.sizes?.length ?? 0) > 12 && <span className="chip">+{d.sizes!.length - 12} more</span>}
         {warn > 0 && <span className="chip warn">{warn} finding(s)</span>}
       </div>
+      {d.casemix && d.casemix.length > 0 && (
+        <div className="table-wrap" style={{ maxHeight: 260, marginBottom: 10 }}>
+          <table className="table"><thead><tr>{Object.keys(d.casemix[0]).map((k) => <th key={k}>{k.replace(/^dx_/, "").replace(/_/g, " ")}</th>)}</tr></thead>
+            <tbody>{d.casemix.map((r, i) => <tr key={i}>{Object.entries(r).map(([k, v]) => <td key={k} className={typeof v === "number" ? "num" : undefined}>{typeof v === "number" ? (k.startsWith("dx_") || k.endsWith("_share") || k === "mortality" ? `${Math.round(v * 100)}%` : fmt(v)) : String(v ?? "–")}</td>)}</tr>)}</tbody></table>
+        </div>
+      )}
       <p className="muted small">Each curve is the share of that site's observations per bin, so sites of different size compare directly. Twelve most observed variables, from a sample of encounters per site{d.shown && d.shown.overlay_sites < d.shown.of ? `, ${d.shown.overlay_sites} largest sites` : ""}.</p>
       {cmp.loading ? <Spinner /> : <VegaChart spec={d.charts.distributions} />}
       <div className="grid c2" style={{ marginTop: 12 }}>

@@ -51,6 +51,16 @@ class VariableProfile:
 
 
 @dataclass
+class IntervalProfile:
+    name: str
+    n_episodes: int
+    n_encounters: int
+    coverage: float
+    median_hours: float | None
+    median_value: float | None
+
+
+@dataclass
 class EventProfile:
     name: str
     n_observations: int
@@ -98,6 +108,7 @@ class CohortProfile:
     events: list[EventProfile]
     static_columns: list[StaticColumnProfile]
     warnings: list[str]
+    intervals: list[IntervalProfile] = field(default_factory=list)
     generated_at: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds")
     )
@@ -180,6 +191,16 @@ class CohortProfile:
                     "categories": [v for v, _ in e.top_values] or None,
                 }
                 for e in self.events
+            ],
+            "intervals": [
+                {
+                    "name": i.name,
+                    "n_episodes": i.n_episodes,
+                    "coverage": r(i.coverage),
+                    "median_hours": r(i.median_hours),
+                    "median_value": r(i.median_value),
+                }
+                for i in self.intervals
             ],
             "static_columns": [
                 {
@@ -404,6 +425,31 @@ def _looks_like_codes(s: pl.Series) -> bool:
     return sample.len() > 0 and bool(sample.str.contains(_CODES.pattern).all())
 
 
+def _profile_intervals(cohort: Cohort) -> list[IntervalProfile]:
+    from dea.core.model import END, START
+
+    n = len(cohort)
+    rows = collect(
+        cohort.intervals.group_by(VARIABLE).agg(
+            pl.len().alias("n"),
+            pl.col(ENCOUNTER_ID).n_unique().alias("enc"),
+            ((pl.col(END) - pl.col(START)).dt.total_seconds() / 3600.0).median().alias("h"),
+            pl.col(VALUE).median().alias("v"),
+        )
+    ).sort(VARIABLE)
+    return [
+        IntervalProfile(
+            name=r[VARIABLE],
+            n_episodes=int(r["n"]),
+            n_encounters=int(r["enc"]),
+            coverage=r["enc"] / n if n else 0.0,
+            median_hours=_f(r["h"]),
+            median_value=_f(r["v"]),
+        )
+        for r in rows.iter_rows(named=True)
+    ]
+
+
 def _f(x: Any) -> float | None:
     return None if x is None else float(x)
 
@@ -455,6 +501,7 @@ def profile_cohort(cohort: Cohort) -> CohortProfile:
         sampling=sampling,
         variables=variables,
         events=events,
+        intervals=_profile_intervals(cohort),
         static_columns=statics,
         warnings=warnings,
     )

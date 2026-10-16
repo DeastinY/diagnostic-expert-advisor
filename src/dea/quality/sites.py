@@ -333,4 +333,36 @@ def site_checks(cohort: Cohort, site_col: str, profile: pl.DataFrame | None = No
     return out
 
 
-__all__ = ["detect_site_column", "site_bins", "site_checks", "site_profile"]
+def site_casemix(cohort: Cohort, site_col: str) -> pl.DataFrame:
+    """Who is treated where: encounters, age, sex, length of stay, outcome and diagnosis groups.
+
+    A distribution shift between sites is often the population, not the device; this table
+    is what to look at before reading the per-variable findings.
+    """
+    feats = cohort.features().with_columns(pl.col(site_col).cast(pl.String()).alias("site"))
+    aggs: list[pl.Expr] = [
+        pl.len().alias("n_encounters"),
+        pl.col("los_hours").median().alias("los_median_h"),
+    ]
+    if "age" in feats.columns and feats.schema["age"].is_numeric():
+        aggs.append(pl.col("age").median().alias("age_median"))
+    if "sex" in feats.columns:
+        sex = pl.col("sex").cast(pl.String()).str.to_lowercase()
+        aggs.append(sex.is_in(["f", "female", "w"]).mean().alias("female_share"))
+    if "outcome" in feats.columns:
+        aggs.append(
+            (
+                pl.col("outcome")
+                .cast(pl.String())
+                .str.to_lowercase()
+                .is_in(["deceased", "died", "dead", "1"])
+            )
+            .mean()
+            .alias("mortality")
+        )
+    dx = [c for c in feats.columns if c.startswith("dx_") and feats.schema[c] == pl.Boolean]
+    aggs += [pl.col(c).fill_null(False).mean().alias(c) for c in dx]
+    return feats.drop_nulls("site").group_by("site").agg(aggs).sort("n_encounters", descending=True)
+
+
+__all__ = ["detect_site_column", "site_bins", "site_casemix", "site_checks", "site_profile"]
