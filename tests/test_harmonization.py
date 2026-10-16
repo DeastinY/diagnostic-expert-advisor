@@ -129,7 +129,7 @@ def test_cli_import_with_mapping(tmp_path: Path) -> None:
     from dea.cli import main
     from dea.synth import write_mimic_demo
 
-    root = write_mimic_demo(tmp_path / "mimic", n_stays=4, seed=1)
+    root = write_mimic_demo(tmp_path / "mimic", n_stays=4, seed=1, max_hours=48)
     (tmp_path / "site.yaml").write_text('heart_rate: ["Heart Rate"]\n')
     assert (
         main(["import", str(root), str(tmp_path / "out"), "--mapping", str(tmp_path / "site.yaml")])

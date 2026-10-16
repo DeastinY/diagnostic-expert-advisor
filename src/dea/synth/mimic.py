@@ -77,12 +77,16 @@ def _write(df: pl.DataFrame, path: Path) -> None:
         fh.write(df.write_csv().encode())
 
 
-def write_mimic_demo(path: Path | str, n_stays: int = 50, seed: int = 0) -> Path:
+def write_mimic_demo(
+    path: Path | str, n_stays: int = 50, seed: int = 0, max_hours: float = 14 * 24
+) -> Path:
     """Write MIMIC-IV-shaped tables for ``n_stays`` synthetic ICU stays under ``path``."""
     root = Path(path)
     rng = np.random.default_rng(seed)
     ids = _ids(rng, n_stays)
-    static, dynamic, events, intervals = _generate_batch(rng, ids, min_hours=12, max_hours=14 * 24)
+    static, dynamic, events, intervals = _generate_batch(
+        rng, ids, min_hours=12, max_hours=max_hours
+    )
     stay_ids = {eid: 30_000_000 + i for i, eid in enumerate(ids)}
     base = datetime(2150, 1, 1)
     intimes = {
