@@ -57,12 +57,20 @@ to choose one. The guided import then goes through four steps:
    processing defaults) is applied in the same go.
 4. **Done.** What was imported, what was fixed, and what is left to look at.
 
+For a table you can add a separate static table (one row per encounter with age, sex,
+outcome, hospital, ...) in the "what we found" step, by path or upload. "Apply and check
+again" and the import itself reuse the import that was already checked, so they take seconds,
+not another full read.
+
 A few things happen on their own at import, with no checkbox: units are converted per row to
 the concept's unit (°F to °C, mEq/L to mmol/L for sodium and potassium, "units" charted on a
 per-hour item to U/h); rows in a unit that cannot be converted become their own variable, for
 example `WBC (#/hpf)` next to `WBC`, so one variable never mixes units; and a variable whose
 rows all sit in a unit that does not fit its dictionary match (a vancomycin *level* in ug/mL
-under a drug concept in mg) is left as it is and not mapped.
+under a drug concept in mg) is left as it is and not mapped. Names that say they are something
+else ("PH (dipstick)", "Urine Sodium", "Vancomycin (Trough)") are not matched in the first
+place, and when most values of a matched variable fall outside the concept's plausible range
+the review step offers to unmap it rather than to drop the values.
 
 From the command line, `uv run dea import export.csv data/mine --fix recommended` applies the
 same recommended fixes, and `--fix duplicates,time:negative` a list of check ids from

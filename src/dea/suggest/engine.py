@@ -74,6 +74,8 @@ def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Sugges
     by_name = {v.name: v for v in profile.variables}
     interval_vars = cohort.interval_variables
     matches = _matches(list(by_name) + interval_vars)
+    for v in cohort.config.unmapped:
+        matches.pop(v, None)
     canonical_present = {c.name for c, _ in matches.values()}
 
     # 1. harmonization
@@ -310,10 +312,12 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
     processing: dict[str, Any] | None = None
     fixes: list[dict[str, Any]] = []
     parse: list[str] = []
+    unmap: list[str] = []
     dedupe = drop_negative = False
     for s in suggestions:
         a = s.action or {}
         fixes += [a["fix"]] if "fix" in a else []
+        unmap += [a["unmap"]] if "unmap" in a else []
         dedupe = dedupe or bool(a.get("dedupe"))
         drop_negative = drop_negative or a.get("drop_time") == "negative"
         parse += [a["parse"]["variable"]] if "parse" in a else []
@@ -348,6 +352,11 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
     out = out.move_to_static([v for v in to_static if v in cohort.variables])
     out = out.rename_variables(renames)
     cfg = out.config
+    for v in unmap:  # not the concept it looked like: forget code and label, remember that
+        cfg.variable_codes.pop(v, None)
+        cfg.variable_labels.pop(v, None)
+        if v not in cfg.unmapped:
+            cfg.unmapped.append(v)
     cfg.variable_labels.update(labels)
     cfg.variable_units.update(units)
     ren = lambda v: renames.get(v, v)  # noqa: E731

@@ -85,6 +85,7 @@ function effect(c: Check): string {
   if ("parse" in a) return `parses ${num(c.n)} values`;
   if ("drop" in a) return `hides ${num((a.drop as string[]).length)} variables`;
   if ("filter" in a) return "adds a filter";
+  if ("unmap" in a) return "forgets the concept";
   if ("fix" in a) return (a.fix as { expr: string | null }).expr ? `converts ${num(c.n)} values` : `drops ${num(c.n)} values`;
   return "";
 }
@@ -190,6 +191,8 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
   const [det, setDet] = useState<Detection | null>(null);
   const [staged, setStaged] = useState<string | null>(null);
   const [nFiles, setNFiles] = useState<number | null>(null);
+  const [staticPath, setStaticPath] = useState("");
+  const staticInput = useRef<HTMLInputElement>(null);
   const [ov, setOv] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [prog, setProg] = useState<{ files: number; of: number; bytes: number; ofBytes: number } | null>(null);
@@ -265,7 +268,7 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
   const check = async (fixes: string[], label: string) => {
     setBusy(label); setErr(null);
     try {
-      const rep = (await api.preview({ path: staged!, name, overrides: ov, fixes })).report;
+      const rep = (await api.preview({ path: staged!, name, static_path: staticPath || null, overrides: ov, fixes })).report;
       const known = new Set((preview?.checks ?? []).map((c) => c.id));
       setPreview(rep);
       // keep the user's choices for findings that were already listed, tick the recommended among new ones
@@ -281,7 +284,7 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
   const doImport = async () => {
     setBusy(toApply.length ? `Applying ${toApply.length} fix${toApply.length === 1 ? "" : "es"} and writing the cohort…` : "Writing the cohort…"); setErr(null);
     try {
-      const r = await api.import({ path: staged!, name, overrides: ov, fixes: toApply });
+      const r = await api.import({ path: staged!, name, static_path: staticPath || null, overrides: ov, fixes: toApply });
       let sugg = 0;
       if (harmonize) {
         setBusy("Applying the suggested harmonization…");
@@ -295,7 +298,7 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
     } catch (e) { fail(e); } finally { setBusy(null); }
   };
 
-  const reset = () => { setStep(0); setDet(null); setStaged(null); setPreview(null); setResult(null); setOv({}); setErr(null); setSelected(new Set()); };
+  const reset = () => { setStep(0); setDet(null); setStaged(null); setPreview(null); setResult(null); setOv({}); setErr(null); setSelected(new Set()); setStaticPath(""); };
   const [fmtTitle, fmtText] = FORMAT_TEXT[det?.format ?? "unknown"] ?? FORMAT_TEXT.unknown;
 
   return (
@@ -386,6 +389,21 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
                 </div>
               )}
             </>
+          )}
+          {det.format === "table" && (
+            <div className="field">
+              <span>Static table (optional): one row per encounter with age, sex, outcome, hospital, ...</span>
+              <div className="row">
+                <input style={{ flex: 1 }} placeholder="/path/to/patients.csv" value={staticPath} onChange={(e) => setStaticPath(e.target.value)} />
+                <button className="sm" disabled={!!busy} onClick={() => staticInput.current?.click()}>Upload</button>
+                <input ref={staticInput} type="file" style={{ display: "none" }} onChange={async (e) => {
+                  const f = e.target.files?.[0]; e.target.value = "";
+                  if (!f) return;
+                  setBusy("Uploading the static table…");
+                  try { setStaticPath((await api.upload(f)).staged); } catch (x) { fail(x); } finally { setBusy(null); }
+                }} />
+              </div>
+            </div>
           )}
           <label className="field">Cohort name<input value={name} onChange={(e) => setName(e.target.value.replace(/[^\w.-]+/g, "_"))} /></label>
           {busy && <div className="stack" style={{ gap: 6 }}><Spinner label={busy} /><div className="busy-bar" /></div>}

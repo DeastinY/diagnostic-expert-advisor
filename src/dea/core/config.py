@@ -84,6 +84,11 @@ class CohortConfig(BaseModel):
     variable_codes: dict[str, str] = Field(
         default_factory=dict, description="Variable -> LOINC code, when known"
     )
+    unmapped: list[str] = Field(
+        default_factory=list,
+        description="Variables that must not be matched to a dictionary concept (a different "
+        "measurement under a known name)",
+    )
     value_fixes: list[ValueFix] = Field(
         default_factory=list, description="Value rewrites applied to the stored observations"
     )
@@ -115,6 +120,7 @@ class CohortConfig(BaseModel):
         new.variable_labels = {ren(k): v for k, v in self.variable_labels.items()}
         new.variable_units = {ren(k): v for k, v in self.variable_units.items()}
         new.variable_codes = {ren(k): v for k, v in self.variable_codes.items()}
+        new.unmapped = [ren(v) for v in self.unmapped]
         for fix in new.value_fixes:
             fix.variable = ren(fix.variable)
         new.processing.drop_variables = [ren(v) for v in self.processing.drop_variables]

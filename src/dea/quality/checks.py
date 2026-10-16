@@ -46,10 +46,12 @@ def apply_checks(cohort: Cohort, checks: list[Check]) -> Cohort:
     return apply_suggestions(cohort, [c for c in checks if c.action])  # type: ignore[arg-type]
 
 
-def _concepts(variables: list[str]) -> dict[str, Concept]:
+def _concepts(variables: list[str], skip: list[str] | None = None) -> dict[str, Concept]:
     d = load_dictionary()
     out = {}
     for v in variables:
+        if skip and v in skip:
+            continue
         m = d.match(v)
         if m:
             out[v] = m[0]
@@ -153,6 +155,33 @@ def range_checks(cohort: Cohort, concepts: dict[str, Concept]) -> list[Check]:
     for row in stats.iter_rows(named=True):
         var, c = row[VARIABLE], ranged[row[VARIABLE]]
         lo, hi = c.range
+        n_bad = row["n_below"] + row["n_above"]
+        if row["n"] >= MIN_ROWS and n_bad / row["n"] >= 0.5:
+            explained = any(
+                med is not None and lo <= conv.apply(med) <= hi
+                for conv in units.conversions_into(c.ucum, c.name)
+                for med in (row["med_below"], row["med_above"])
+            )
+            if not explained:
+                out.append(
+                    Check(
+                        id=f"concept:{var}",
+                        severity="warning",
+                        title=f"'{var}' does not look like {c.label}",
+                        detail=(
+                            f"{n_bad / row['n']:.0%} of its values are outside {lo}-{hi} "
+                            f"{c.unit}, the plausible range of {c.label}, and no unit "
+                            "conversion explains that. It is probably a different measurement "
+                            "under a similar name. Unmapping keeps the data and forgets the "
+                            "concept, its code and its range."
+                        ),
+                        variables=[var],
+                        action={"unmap": var},
+                        n=int(n_bad),
+                        recommended=True,
+                    )
+                )
+                continue
         for side, n_out, med in (
             ("above", row["n_above"], row["med_above"]),
             ("below", row["n_below"], row["med_below"]),
@@ -426,7 +455,7 @@ def run_checks(
 ) -> list[Check]:
     """All checks, most severe first."""
     profile = profile or profile_cohort(cohort)
-    concepts = _concepts([v.name for v in profile.variables])
+    concepts = _concepts([v.name for v in profile.variables], skip=cohort.config.unmapped)
     out = unit_checks(unit_reports or [])
     ranged = range_checks(cohort, concepts)
     out += ranged
@@ -440,7 +469,9 @@ def run_checks(
 
         out += site_checks(cohort, site_col)
     order = {"error": 0, "warning": 1, "info": 2}
-    return sorted(out, key=lambda c: (order[c.severity], -c.n))
+    seen: set[str] = set()
+    unique = [c for c in out if not (c.id in seen or seen.add(c.id))]  # type: ignore[func-returns-value]
+    return sorted(unique, key=lambda c: (order[c.severity], -c.n))
 
 
 __all__ = ["Check", "apply_checks", "run_checks", "unit_checks", "range_checks", "cluster_checks"]

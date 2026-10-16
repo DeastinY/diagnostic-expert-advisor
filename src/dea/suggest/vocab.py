@@ -14,6 +14,13 @@ _DICT_PATH = Path(__file__).with_name("dictionary.yaml")
 _NORMALIZE = re.compile(r"[\s_\-./()\[\],:]+")
 _PAREN = re.compile(r"\(.*?\)")
 _SUFFIX = re.compile(r"\b(infusion|rate|drip|dose|dosage|administration|continuous)\b", re.I)
+# Words that make a name a *different* measurement than the concept it would otherwise match:
+# another specimen, a drug level instead of a dose, a device setting. Such names are left alone.
+_OTHER = re.compile(
+    r"\b(urine|urinary|dipstick|stool|sputum|csf|pleural|ascit\w*|drain\w*|gastric|fluid|"
+    r"trough|peak|random|level|set|alarm|limit|goal|target|min(imum)?|max(imum)?)\b",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -52,6 +59,8 @@ class Dictionary:
         key = normalize(variable)
         if key in self._index:
             return self._index[key], 1.0
+        if _OTHER.search(variable):  # "PH (dipstick)", "Vancomycin (Trough)", "FiO2 (set)"
+            return None
         bare = normalize(_PAREN.sub("", variable))
         if bare in self._index:
             return self._index[bare], 0.97

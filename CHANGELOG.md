@@ -3,12 +3,24 @@
 ## 2.0.0a2
 
 Web app
+- "Apply and check again" and the final import reuse the checked import kept in memory, so
+  they only apply the fixes instead of reading the source again. A table import can take a
+  separate static table (path or upload) in the "what we found" step.
+
 - Review & fix step in the guided import: counts, a severity bar, the fixes DEA can apply
   grouped with a checkbox each (recommended ones ticked), "apply and check again" to see what
   remains before anything is written, the unit conversions in a table and the rest grouped
   for later. Import applies the chosen fixes; the CLI does the same with `dea import --fix`.
 - Fixes for numbers stored as text (the leading number becomes an observation) and for rows
   before admission; rarely recorded variables can be hidden in one go.
+
+Harmonization
+- Names that denote another specimen or a drug level ("PH (dipstick)", "Urine Sodium",
+  "Vancomycin (Trough)", "FiO2 (set)") are no longer matched to the concept of the plain
+  name. When most values of a matched variable sit outside the concept's plausible range and
+  no unit explains it, the check proposes to unmap the variable (data kept, concept, code and
+  range forgotten; remembered in `cohort.yaml` as `unmapped`) instead of dropping the values.
+- Findings are reported once per id.
 
 Units
 - Rows in a unit that cannot be converted become their own `<variable> (<unit>)` variable

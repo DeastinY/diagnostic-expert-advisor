@@ -124,9 +124,9 @@ export const api = {
   demo: (body: { name: string; n: number; mimic: boolean; sites?: number }) =>
     request<{ name: string }>("/api/cohorts/demo", { method: "POST", body: JSON.stringify(body) }),
   detect: (path: string) => request<Detection>("/api/detect", { method: "POST", body: JSON.stringify({ path }) }),
-  import: (body: { path: string; name?: string; overrides: Record<string, unknown>; fixes?: string[] }) =>
+  import: (body: { path: string; name?: string; static_path?: string | null; overrides: Record<string, unknown>; fixes?: string[] }) =>
     request<{ name: string; report: ImportReport }>("/api/cohorts/import", { method: "POST", body: JSON.stringify(body) }),
-  preview: (body: { path: string; name?: string; overrides: Record<string, unknown>; fixes?: string[] }) =>
+  preview: (body: { path: string; name?: string; static_path?: string | null; overrides: Record<string, unknown>; fixes?: string[] }) =>
     request<{ name: string; report: ImportReport }>("/api/cohorts/preview", { method: "POST", body: JSON.stringify(body) }),
   checks: (name: string) => request<Check[]>(`/api/cohorts/${name}/checks`),
   sites: (name: string, where: Where, column?: string) =>

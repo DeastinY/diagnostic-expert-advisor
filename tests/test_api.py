@@ -287,3 +287,44 @@ def test_folder_upload_in_batches(client, tmp_path):
     assert r.status_code == 201, r.text
     assert r.json()["report"]["n_encounters"] == 2
     assert not staged.exists()  # the staging folder is gone once the cohort is written
+
+
+def test_preview_with_fixes_and_static_table(client, tmp_path):
+    """Re-checking with fixes reuses the checked import; a static table joins in."""
+    import polars as pl
+
+    rows = []
+    for i in range(30):
+        enc = "ab"[i % 2]
+        rows += [(enc, i, "HR", 80.0), (enc, i, "HR", 80.0)]
+    pl.DataFrame(
+        {
+            "encounter_id": [r[0] for r in rows],
+            "time": [r[1] for r in rows],
+            "variable": [r[2] for r in rows],
+            "value": [r[3] for r in rows],
+        }
+    ).write_csv(tmp_path / "obs.csv")
+    pl.DataFrame({"encounter_id": ["a", "b"], "age": [61, 72], "site": ["X", "Y"]}).write_csv(
+        tmp_path / "patients.csv"
+    )
+    body = {
+        "path": str(tmp_path / "obs.csv"),
+        "name": "pv",
+        "static_path": str(tmp_path / "patients.csv"),
+    }
+    first = client.post("/api/cohorts/preview", json=body).json()["report"]
+    assert first["summary"]["recommended"] == 1 and first["applied"] == []
+    second = client.post("/api/cohorts/preview", json={**body, "fixes": ["duplicates"]})
+    second = second.json()["report"]
+    assert second["applied"] == ["duplicates"]
+    assert not any(c["id"] == "duplicates" for c in second["checks"])
+    assert second["n_observations"] == 30
+    third = client.post("/api/cohorts/preview", json=body).json()["report"]  # unfixed one intact
+    assert third["applied"] == [] and third["n_observations"] == 60
+    done = client.post("/api/cohorts/import", json={**body, "fixes": ["duplicates"]})
+    assert done.status_code == 201
+    detail = client.get("/api/cohorts/pv").json()
+    assert "age" in detail["static_columns"] and "site" in detail["static_columns"]
+    bad = client.post("/api/cohorts/preview", json={**body, "static_path": "/nope.csv"})
+    assert bad.status_code == 404

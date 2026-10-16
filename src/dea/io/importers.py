@@ -724,19 +724,34 @@ def import_path(
 
         report.checks = run_checks(cohort, unit_reports=report.unit_reports)
         if fixes:
-            from dea.quality.checks import apply_checks
-
-            if fixes == "recommended":
-                chosen = [c for c in report.checks if c.action and c.recommended]
-            else:
-                wanted = set(fixes)
-                chosen = [c for c in report.checks if c.action and c.id in wanted]
-            if chosen:
-                cohort = apply_checks(cohort, chosen)
-                report.applied = [c.id for c in chosen]
-                report.checks = run_checks(cohort, unit_reports=report.unit_reports)
-                report.n_observations = cohort.summary().n_observations
+            cohort, report = apply_import_fixes(cohort, report, fixes)
     return cohort, report
+
+
+def apply_import_fixes(
+    cohort: Cohort, report: ImportReport, fixes: list[str] | str
+) -> tuple[Cohort, ImportReport]:
+    """Apply the fixes of ``report.checks`` named in ``fixes`` (ids, or ``"recommended"``)
+    and run the checks again. Returns a new cohort and a new report; the inputs stay as they
+    were, so an import that was checked once can be re-fixed any number of times."""
+    import copy
+
+    from dea.quality import run_checks
+    from dea.quality.checks import apply_checks
+
+    if fixes == "recommended":
+        chosen = [c for c in report.checks if c.action and c.recommended]
+    else:
+        wanted = set(fixes)
+        chosen = [c for c in report.checks if c.action and c.id in wanted]
+    if not chosen:
+        return cohort, report
+    out = copy.copy(report)
+    fixed = apply_checks(cohort, chosen)
+    out.applied = [c.id for c in chosen]
+    out.checks = run_checks(fixed, unit_reports=report.unit_reports)
+    out.n_observations = fixed.summary().n_observations
+    return fixed, out
 
 
 def _import_path(

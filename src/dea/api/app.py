@@ -159,6 +159,7 @@ class DeriveIn(BaseModel):
 class ImportIn(BaseModel):
     path: str
     name: str | None = None
+    static_path: str | None = None  # a separate static table for a long or wide table
     overrides: dict[str, Any] = Field(default_factory=dict)
     fixes: list[str] = Field(default_factory=list)  # check ids whose fix is applied at import
 
@@ -339,14 +340,36 @@ def create_app(
             raise HTTPException(404, f"{p} does not exist")
         return _detected(p)
 
+    # The checked-but-unfixed import of the last few sources stays in memory, so "apply and
+    # check again" and the final import only apply fixes instead of reading everything again.
+    import_cache: dict[str, tuple[Cohort, Any]] = {}
+
     def _import(body: ImportIn) -> tuple[Cohort, Any]:
+        from dea.io.importers import apply_import_fixes
+
         p = Path(body.path)
         if not p.exists():
             raise HTTPException(404, f"{p} does not exist")
+        if body.static_path and not Path(body.static_path).exists():
+            raise HTTPException(404, f"{body.static_path} does not exist")
+        key = json.dumps(
+            [str(p), body.name, body.static_path, body.overrides, p.stat().st_mtime],
+            sort_keys=True,
+            default=str,
+        )
         try:
-            return import_path(
-                p, name=body.name or p.stem, fixes=body.fixes or None, **body.overrides
-            )
+            if key not in import_cache:
+                import_cache[key] = import_path(
+                    p, name=body.name or p.stem, static_path=body.static_path, **body.overrides
+                )
+                while len(import_cache) > 3:
+                    import_cache.pop(next(iter(import_cache)))
+            cohort, report = import_cache[key]
+            if body.fixes:
+                cohort, report = apply_import_fixes(cohort, report, body.fixes)
+            return cohort, report
+        except HTTPException:
+            raise
         except Exception as exc:  # import errors are user errors (bad mapping, bad file)
             raise HTTPException(400, str(exc)) from exc
 
@@ -367,6 +390,8 @@ def create_app(
         report.save(target)
         store.invalidate(name)
         _discard_upload(Path(body.path))
+        for k in [k for k in import_cache if str(body.path) in k]:
+            import_cache.pop(k, None)
         return {"name": name, "report": report.to_dict()}
 
     @app.get("/api/cohorts/{name}/import")

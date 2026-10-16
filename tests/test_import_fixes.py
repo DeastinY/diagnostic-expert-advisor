@@ -88,3 +88,35 @@ def test_fixes_at_import(tmp_path: Path) -> None:
     )
     assert explicit.applied == ["time:negative"]
     assert cohort.dynamic.filter(pl.col("time") < pl.duration(seconds=0)).collect().height == 0
+
+
+def test_other_specimen_names_are_not_matched() -> None:
+    from dea.suggest.vocab import match_variable
+
+    assert match_variable("PH (dipstick)") is None
+    assert match_variable("Vancomycin (Trough)") is None
+    assert match_variable("Urine Sodium") is None
+    assert match_variable("PH (Arterial)") is not None
+    assert match_variable("Sodium (serum)") is not None
+
+
+def test_concept_mismatch_is_unmapped(tmp_path: Path) -> None:
+    """Most values of 'Arterial pH' far outside 6.6-7.9: a different measurement, so the
+    concept is forgotten rather than 90% of the data dropped; the choice persists."""
+    from dea.quality import apply_checks, run_checks
+
+    rows: list[tuple] = []
+    for i in range(60):
+        enc = "abcdef"[i % 6]
+        rows.append((enc, i, "pH", 5.0 + (i % 10) / 10, ""))  # urine-like, 5.0-5.9
+        rows.append((enc, i, "HR", 80.0, ""))
+    _long(rows).write_csv(tmp_path / "obs.csv")
+    cohort, report = import_path(tmp_path / "obs.csv", name="m", unit_col="unit")
+    ids = {c.id: c for c in report.checks}
+    assert "concept:pH" in ids and ids["concept:pH"].recommended
+    assert not any(k.startswith("range:pH") for k in ids)
+    fixed = apply_checks(cohort, [ids["concept:pH"]])
+    assert fixed.config.unmapped == ["pH"] and "pH" not in fixed.config.variable_codes
+    again = {c.id for c in run_checks(fixed)}
+    assert not any(k.startswith("concept:pH") or k.startswith("range:pH") for k in again)
+    assert fixed.dynamic.filter(pl.col("variable") == "pH").collect().height == 60
