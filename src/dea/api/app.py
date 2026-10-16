@@ -11,6 +11,7 @@ import functools
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import tempfile
 import zipfile
@@ -19,8 +20,8 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import polars as pl
-from fastapi import FastAPI, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -212,6 +213,21 @@ def create_app(
     store = CohortStore(Path(data_dir or os.environ.get("DEA_DATA_DIR", "data")))
     app = FastAPI(title="Diagnostic Expert Advisor", version="2")
     app.state.store = store
+    token = os.environ.get("DEA_TOKEN")
+    if token:  # optional shared-instance protection: one bearer token for the whole API
+
+        @app.middleware("http")
+        async def require_token(request: Request, call_next):  # noqa: ANN001, ANN202
+            path = request.url.path
+            if path.startswith("/api/") and path != "/api/health":
+                given = request.headers.get("authorization", "")
+                given = given[7:] if given.lower().startswith("bearer ") else given
+                given = given or request.query_params.get("token", "")
+                if not secrets.compare_digest(given, token):
+                    return JSONResponse(
+                        {"detail": "a valid DEA_TOKEN is required"}, status_code=401
+                    )
+            return await call_next(request)
 
     # ---- cohorts
     @app.get("/api/cohorts")
@@ -633,6 +649,7 @@ def create_app(
         variables: Annotated[list[str] | None, Query()] = None,
         every: str | None = None,
         dark: bool = False,
+        band: bool = True,
     ) -> dict[str, Any]:
         from dea import charts
 
@@ -643,6 +660,22 @@ def create_app(
             raise HTTPException(404, str(exc)) from exc
         cfg = cohort.config
         chosen = variables or [v for v in cfg.plots if v in e.variables] or e.variables[:6]
+        bands: dict[str, pl.DataFrame] = {}
+        if band and len(cohort) > 1:
+            horizon = int(e.los_hours) + 2
+            for v in chosen:
+                rows = store.result(
+                    name,
+                    "band",
+                    {"variable": v, "every": "1h", "max_hours": horizon},
+                    lambda v=v: (
+                        cohort.trajectory(v, every="1h", max_hours=horizon)
+                        .select("hours", "lo", "median", "hi")
+                        .to_dicts()
+                    ),
+                )
+                if rows:
+                    bands[v] = pl.DataFrame(rows)
         chart = charts.small_multiples(
             e,
             chosen,
@@ -650,6 +683,7 @@ def create_app(
             labels=cfg.variable_labels,
             units=cfg.variable_units,
             dark=dark,
+            bands=bands,
         )
         return {"spec": chart.to_dict() if chart is not None else None}
 
@@ -933,7 +967,13 @@ def create_app(
     def report(name: str, where: Where = None) -> str:
         from dea.report import render_html
 
-        return render_html(_filtered(store.get(name), where))
+        full = store.get(name)
+        children = []
+        for info in list_cohorts(store.data_dir):
+            cfg = store.get(info.path.name).config
+            if cfg.parent and Path(cfg.parent).name == name and cfg.derived_by:
+                children.append((info.name, info.n_encounters, cfg.derived_by))
+        return render_html(_filtered(full, where), children=children)
 
     @app.get("/api/cohorts/{name}/export")
     def export(
@@ -1019,8 +1059,8 @@ def create_app(
         }
 
     @app.get("/api/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok", "data_dir": str(store.data_dir)}
+    def health() -> dict[str, Any]:
+        return {"status": "ok", "data_dir": str(store.data_dir), "auth": bool(token)}
 
     # ---- frontend
     static_dir = (
