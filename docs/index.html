@@ -421,7 +421,7 @@
     <div class="qs">
       <div class="term reveal copy" data-delay="1">
         <div class="head"><div class="dots"><i></i><i></i><i></i></div><div class="tt"><button aria-selected="true" data-t="demo">Demo</button><button aria-selected="false" data-t="own">Your data</button><button aria-selected="false" data-t="mimic">MIMIC-IV</button></div></div>
-        <pre class="on" data-t="demo"><span class="c"># install</span>
+        <pre class="on" data-t="demo"><span class="c"># install (or without a clone: uv tool install "dea[all] @ git+https://github.com/DeastinY/diagnostic-expert-advisor")</span>
 git clone https://github.com/DeastinY/diagnostic-expert-advisor.git dea
 cd dea &amp;&amp; uv sync --all-extras
 
@@ -481,6 +481,7 @@ X_train, y_train = ds.train()</pre>
     <div class="reveal">
       <details><summary>Does any patient data leave my machine?</summary><p>No. Everything runs locally. The optional AI advisor only gets a profile of the cohort, i.e. aggregate statistics per variable, never encounter ids, timestamps or individual values. The web app shows you exactly what would be sent before you send it.</p></details>
       <details><summary>Do I have to write code?</summary><p>No. Start the server, add your data in the browser and you get the checks, the suggestions and all plots without a notebook. If you want to script things, the CLI and the Python API do the same.</p></details>
+      <details><summary>How do I install and update it?</summary><p>Either clone the repository and use <code>uv run dea</code>, or install it as a tool with <code>uv tool install "dea[all] @ git+https://github.com/DeastinY/diagnostic-expert-advisor"</code>. <code>dea update</code> brings either one up to date, <code>dea serve --auto-update</code> does it before every start, and the app tells you in the sidebar when there is something new.</p></details>
       <details><summary>How large can a cohort be?</summary><p>The storage was built with MIMIC-sized cohorts in mind. On a synthetic cohort of 2,000 encounters and 54 million observations the feature table takes about three seconds and looking up a single encounter around 20 ms, with less than 2.5 GB of memory. The large gzipped MIMIC tables are converted to Parquet once and read lazily after that.</p></details>
       <details><summary>What does the data have to look like?</summary><p>You need an encounter id, a time (timestamps or offsets since admission) and either variable/value columns or one column per variable. Non-numeric values become events. A separate table with static data is optional. MIMIC-IV folders and FHIR R4 resources are recognized as such.</p></details>
       <details><summary>Can I use it with several hospitals?</summary><p>Yes. A static column that names the site turns on the per-site comparison: case mix, distributions, coverage, sampling and findings whose fixes only apply to one site. When building a dataset you can hold out whole hospitals as the test set.</p></details>

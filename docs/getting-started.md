@@ -12,6 +12,22 @@ uv run dea --help
 without extras installs only the core (Polars, pydantic, PyYAML) plus the dev tools. pip works
 too: `pip install -e ".[all]"`.
 
+If you do not want a checkout, install DEA as a tool and drop the `uv run` prefix everywhere
+below:
+
+```bash
+uv tool install "dea[all] @ git+https://github.com/DeastinY/diagnostic-expert-advisor"
+```
+
+## Update
+
+`uv run dea update` (or just `dea update` for a tool install) pulls the newest version: in a
+checkout that is `git pull` followed by `uv sync --all-extras`, for a tool install it is
+`uv tool upgrade dea`. `dea update --check` only reports. `dea serve --auto-update` updates
+before starting, which is handy for a machine that runs DEA permanently; `DEA_AUTO_UPDATE=1`
+does the same. The sidebar of the web app shows a hint when there is something new, set
+`DEA_NO_UPDATE_CHECK=1` if the machine should not contact GitHub.
+
 ## Start the app
 
 ```bash

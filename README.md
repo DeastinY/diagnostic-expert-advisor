@@ -37,11 +37,30 @@ uv sync --all-extras          # core + web app, advisor, reports, NLP, pandas, S
 uv run dea --help
 ```
 
+Without a clone, as a tool on your PATH:
+
+```bash
+uv tool install "dea[all] @ git+https://github.com/DeastinY/diagnostic-expert-advisor"
+dea serve --data-dir ~/dea-data
+```
+
 With pip: `pip install -e ".[all]"` from the clone, or `pip install -e ".[web]"` if you only
 want the app. The core itself needs just Polars, pydantic and PyYAML.
 
-The web app is committed as a built bundle in `frontend/dist`, so a clone works without node.
-If you change the frontend, rebuild it with `npm ci && npm run build` inside `frontend/`.
+The web app is committed as a built bundle in `frontend/dist` and shipped inside the package,
+so neither way needs node. If you change the frontend, rebuild it with `npm ci && npm run
+build` inside `frontend/`.
+
+## Update
+
+```bash
+uv run dea update          # a clone: git pull + uv sync. A tool install: uv tool upgrade dea
+uv run dea update --check  # only tell me whether there is something new
+uv run dea serve --auto-update   # update first, then start (or DEA_AUTO_UPDATE=1)
+```
+
+`dea version --check` shows the install mode and commit. The web app shows a hint in the
+sidebar when the repository has moved on. `DEA_NO_UPDATE_CHECK=1` turns the check off.
 
 ## Get started
 

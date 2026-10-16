@@ -9,6 +9,10 @@ Fixes
   of `subject_id` and the alphabetically first variable.
 
 Packaging
+- `dea update` (git pull + uv sync in a checkout, `uv tool upgrade` for a tool install),
+  `dea update --check`, `dea version`, `dea serve --auto-update` / `DEA_AUTO_UPDATE=1`, and an
+  update hint in the sidebar (`DEA_NO_UPDATE_CHECK=1` turns the GitHub check off).
+- Installable without a clone: `uv tool install "dea[all] @ git+<repo>"`.
 - The built web app is committed in `frontend/dist` and bundled into the wheel as `dea/static`,
   so a clone or an installed package serves the UI without node. `dea serve` warns when no
   build is found and the API's root page says how to build one; `DEA_FRONTEND_DIR` overrides.

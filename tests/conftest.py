@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from dea.core import Cohort
 from dea.synth import generate_cohort
+
+os.environ.setdefault("DEA_NO_UPDATE_CHECK", "1")  # no GitHub calls from the test suite
 
 
 @pytest.fixture(scope="session")

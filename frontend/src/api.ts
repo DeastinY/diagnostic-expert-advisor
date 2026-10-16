@@ -109,7 +109,14 @@ export function qs(params: Record<string, string | number | boolean | undefined 
 
 export const isDark = () => typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches;
 
+export interface Health {
+  status: string; data_dir: string; auth: boolean; version: string;
+  update: { mode: string; version: string; commit: string | null; branch: string | null; latest: string | null;
+    update_available: boolean | null; command: string[][] } | null;
+}
+
 export const api = {
+  health: () => request<Health>("/api/health"),
   cohorts: () => request<CohortInfo[]>("/api/cohorts"),
   cohort: (name: string, where: Where = []) => request<CohortDetail>(`/api/cohorts/${name}${qs({}, where)}`),
   deleteCohort: (name: string) => request<void>(`/api/cohorts/${name}`, { method: "DELETE" }),

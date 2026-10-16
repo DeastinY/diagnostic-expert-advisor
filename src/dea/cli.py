@@ -10,6 +10,8 @@ from pathlib import Path
 
 import polars as pl
 
+from dea.update import REPO
+
 
 def _cmd_synth(args: argparse.Namespace) -> int:
     if args.mimic:
@@ -321,7 +323,55 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_version(args: argparse.Namespace) -> int:
+    from dea.update import check, describe
+
+    inst = describe()
+    where = f" ({inst.root})" if inst.root else ""
+    commit = f" at {inst.commit[:9]}" if inst.commit else ""
+    branch = f" on {inst.branch}" if inst.branch else ""
+    print(f"dea {inst.version}, installed from {inst.mode}{where}{commit}{branch}")
+    if args.check:
+        info = check()
+        if info["update_available"] is None:
+            print("could not compare with GitHub (offline, or no commit recorded)")
+        elif info["update_available"]:
+            print(f"update available: {info['latest'][:9]} on {REPO}. Run: dea update")
+        else:
+            print("up to date")
+    return 0
+
+
+def _cmd_update(args: argparse.Namespace) -> int:
+    from dea.update import check, update, update_command
+
+    if args.check:
+        info = check()
+        state = {None: "unknown", True: "update available", False: "up to date"}
+        print(f"{state[info['update_available']]}; would run:")
+        for cmd in info["command"]:
+            print("  " + " ".join(cmd))
+        return 0 if info["update_available"] is not True else 3
+    code = update()
+    if code:
+        print(f"update failed (exit {code}); the commands were:", file=sys.stderr)
+        for cmd in update_command():
+            print("  " + " ".join(cmd), file=sys.stderr)
+        return code
+    print("DEA is up to date. Restart `dea serve` to pick up the new code.")
+    return 0
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
+    from dea.update import auto_update_requested, update
+
+    if auto_update_requested(args.auto_update) and not os.environ.get("DEA_UPDATED"):
+        if update() == 0:
+            # the running process still has the old code: start over without updating again
+            env = {**os.environ, "DEA_UPDATED": "1"}
+            argv = [a for a in sys.argv[1:] if a != "--auto-update"]
+            os.execve(sys.executable, [sys.executable, "-m", "dea.cli", *argv], env)
+        print("warning: update failed, starting the installed version", file=sys.stderr)
     try:
         import uvicorn
     except ImportError:
@@ -472,7 +522,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--reload", action="store_true")
+    p.add_argument(
+        "--auto-update",
+        action="store_true",
+        help="run `dea update` first, then start (also DEA_AUTO_UPDATE=1)",
+    )
     p.set_defaults(func=_cmd_serve)
+
+    p = sub.add_parser(
+        "update", help="bring this installation up to date (git pull + uv sync, or uv tool upgrade)"
+    )
+    p.add_argument("--check", action="store_true", help="only report whether an update exists")
+    p.set_defaults(func=_cmd_update)
+
+    p = sub.add_parser("version", help="version, install mode and commit")
+    p.add_argument("--check", action="store_true", help="also compare with GitHub")
+    p.set_defaults(func=_cmd_version)
 
     return parser
 

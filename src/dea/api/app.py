@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from dea import __version__
 from dea.core import Cohort, FilterError, Rule
 from dea.core.config import ProcessingConfig
 from dea.core.time import format_duration
@@ -1064,9 +1065,30 @@ def create_app(
             "summary": _records(entity_summary(ents, len(cohort), min_encounters), 200),
         }
 
+    app.state.update = None  # filled in by a background check, see below
+
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {"status": "ok", "data_dir": str(store.data_dir), "auth": bool(token)}
+        return {
+            "status": "ok",
+            "data_dir": str(store.data_dir),
+            "auth": bool(token),
+            "version": __version__,
+            "update": app.state.update,
+        }
+
+    if not os.environ.get("DEA_NO_UPDATE_CHECK"):
+        import threading
+
+        from dea.update import check
+
+        def _check() -> None:
+            try:
+                app.state.update = check()
+            except Exception:  # noqa: BLE001 (a failed check must never affect the app)
+                app.state.update = None
+
+        threading.Thread(target=_check, name="dea-update-check", daemon=True).start()
 
     # ---- frontend
     static_dir = find_frontend(frontend_dir)

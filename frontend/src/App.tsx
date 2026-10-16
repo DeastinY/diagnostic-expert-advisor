@@ -24,6 +24,8 @@ export function Shell({ children }: { children?: ReactNode }) {
   };
   const { data: detail, error, reload } = useAsync(() => (name ? api.cohort(name, where) : Promise.resolve(null)), [name, where.join("|")]);
   const keep = where.length ? `?${new URLSearchParams(where.map((w) => ["where", w])).toString()}` : "";
+  const health = useAsync(() => api.health(), []);
+  const upd = health.data?.update;
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -40,12 +42,24 @@ export function Shell({ children }: { children?: ReactNode }) {
             </>
           )}
         </nav>
-        {detail && (
-          <div className="small muted" style={{ marginTop: "auto" }}>
-            {detail.n_total.toLocaleString()} encounters · {detail.variables.length} variables
-            {detail.config.parent && <div>derived from <code>{detail.config.parent.split("/").pop()}</code></div>}
-          </div>
-        )}
+        <div className="small muted" style={{ marginTop: "auto" }}>
+          {detail && (
+            <>
+              {detail.n_total.toLocaleString()} encounters · {detail.variables.length} variables
+              {detail.config.parent && <div>derived from <code>{detail.config.parent.split("/").pop()}</code></div>}
+            </>
+          )}
+          {health.data && (
+            <div style={{ marginTop: 10 }} title={upd?.commit ? `${upd.mode} install at ${upd.commit.slice(0, 9)}` : undefined}>
+              v{health.data.version}{upd?.commit ? ` · ${upd.commit.slice(0, 7)}` : ""}
+              {upd?.update_available && (
+                <div className="chip warn" style={{ marginTop: 6 }} title={upd.command.map((c) => c.join(" ")).join(" && ")}>
+                  update available · run <code>dea update</code>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </aside>
       <main className="main">
         <CohortCtx.Provider value={{ name: name ?? "", detail, where, setWhere, reload, error }}>
