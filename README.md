@@ -79,6 +79,13 @@ stay window, per-row units (`valueuom`) normalized, ICD-9/ICD-10 diagnoses as `d
 columns. `dea synth out --mimic --n 50` writes synthetic tables in the same layout (including
 MIMIC's °F/°C temperature items and mixed ICD versions) for development without credentials.
 
+## To a model
+
+`dea ml data/icu out.parquet --label "Severe ARDS" --cutoff 24 --split site` writes one row per
+encounter with features from before the cutoff only, a whole-stay label and a split that holds
+out whole hospitals; outcome and label columns are dropped. The same lives in the web app's
+cohort builder and in `dea.ml.make_dataset`. See [`docs/ml.md`](docs/ml.md).
+
 ## Public data
 
 Tested on DEA's own synthetic cohorts and on the SMART on FHIR sample server data (631 Synthea

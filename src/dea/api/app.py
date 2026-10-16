@@ -944,6 +944,56 @@ def create_app(
         cohort.wide(every=every, fill=fill, with_static=True).write_parquet(out)
         return FileResponse(out, filename=out.name, media_type="application/octet-stream")
 
+    def _dataset(
+        name: str,
+        where: Where,
+        label: str,
+        cutoff: float | None,
+        split: str,
+        test_size: float,
+        seed: int,
+    ):  # noqa: ANN202
+        from dea.ml import DatasetSpec, make_dataset
+
+        cohort = _filtered(store.get(name), where)
+        try:
+            return make_dataset(
+                cohort,
+                DatasetSpec(
+                    label=label, cutoff_hours=cutoff, split=split, test_size=test_size, seed=seed
+                ),
+            )
+        except FilterError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/cohorts/{name}/ml/summary")
+    def ml_summary(
+        name: str,
+        label: str,
+        where: Where = None,
+        cutoff: float | None = None,
+        split: str = "encounter",
+        test_size: float = 0.2,
+        seed: int = 0,
+    ) -> dict[str, Any]:
+        ds = _dataset(name, where, label, cutoff, split, test_size, seed)
+        return {**ds.summary(), "features": ds.feature_names[:60]}
+
+    @app.get("/api/cohorts/{name}/ml")
+    def ml_export(
+        name: str,
+        label: str,
+        where: Where = None,
+        cutoff: float | None = None,
+        split: str = "encounter",
+        test_size: float = 0.2,
+        seed: int = 0,
+    ) -> FileResponse:
+        ds = _dataset(name, where, label, cutoff, split, test_size, seed)
+        out = Path(tempfile.mkdtemp(prefix="dea-ml-")) / f"{name}_dataset.parquet"
+        ds.frame().write_parquet(out)
+        return FileResponse(out, filename=out.name, media_type="application/octet-stream")
+
     @app.get("/api/cohorts/{name}/export/fhir")
     def export_fhir_bundle(name: str, where: Where = None) -> FileResponse:
         from dea.standards.fhir import export_fhir

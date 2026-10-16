@@ -164,6 +164,9 @@ export const api = {
   reportUrl: (name: string, where: Where) => `/api/cohorts/${name}/report${qs({}, where)}`,
   exportUrl: (name: string, where: Where, every?: string, fill?: string) => `/api/cohorts/${name}/export${qs({ every, fill }, where)}`,
   fhirExportUrl: (name: string, where: Where) => `/api/cohorts/${name}/export/fhir${qs({}, where)}`,
+  mlSummary: (name: string, where: Where, params: { label: string; cutoff?: number; split: string; test_size?: number }) =>
+    request<{ n: number; n_features: number; positives: number; train: number; test: number; dropped: string[]; features: string[] }>(`/api/cohorts/${name}/ml/summary${qs(params, where)}`),
+  mlUrl: (name: string, where: Where, params: { label: string; cutoff?: number; split: string; test_size?: number }) => `/api/cohorts/${name}/ml${qs(params, where)}`,
 };
 
 export function useWhereParam(search: URLSearchParams): Where { return search.getAll("where"); }
