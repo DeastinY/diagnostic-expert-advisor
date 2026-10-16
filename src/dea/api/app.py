@@ -1063,12 +1063,8 @@ def create_app(
         return {"status": "ok", "data_dir": str(store.data_dir), "auth": bool(token)}
 
     # ---- frontend
-    static_dir = (
-        Path(frontend_dir)
-        if frontend_dir
-        else Path(__file__).resolve().parents[3] / "frontend" / "dist"
-    )
-    if static_dir.exists():
+    static_dir = find_frontend(frontend_dir)
+    if static_dir is not None:
         app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
 
         @app.get("/{path:path}", include_in_schema=False)
@@ -1078,4 +1074,38 @@ def create_app(
                 return FileResponse(target)
             return FileResponse(static_dir / "index.html")
 
+    else:
+
+        @app.get("/", include_in_schema=False)
+        def no_frontend() -> HTMLResponse:
+            return HTMLResponse(NO_FRONTEND_HTML, status_code=503)
+
     return app
+
+
+def find_frontend(frontend_dir: Path | str | None = None) -> Path | None:
+    """The built web app, or ``None`` if there is none.
+
+    Looked up in this order: the explicit argument, ``$DEA_FRONTEND_DIR``, the copy bundled
+    into the installed package (``dea/static``) and ``frontend/dist`` of a source checkout.
+    """
+    candidates = [
+        Path(frontend_dir) if frontend_dir else None,
+        Path(os.environ["DEA_FRONTEND_DIR"]) if os.environ.get("DEA_FRONTEND_DIR") else None,
+        Path(__file__).resolve().parents[1] / "static",
+        Path(__file__).resolve().parents[3] / "frontend" / "dist",
+    ]
+    for c in candidates:
+        if c is not None and (c / "index.html").is_file():
+            return c
+    return None
+
+
+NO_FRONTEND_HTML = """<!doctype html><meta charset="utf-8"><title>DEA</title>
+<body style="font-family:system-ui;max-width:40rem;margin:4rem auto;line-height:1.5">
+<h1>The API is running, but the web app is not built.</h1>
+<p>The React frontend is missing from this installation. From a source checkout, build it once:</p>
+<pre>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</pre>
+<p>then restart <code>dea serve</code>. Alternatively point <code>DEA_FRONTEND_DIR</code> at a
+built copy. The API itself is available under <a href="/docs">/docs</a>.</p>
+</body>"""

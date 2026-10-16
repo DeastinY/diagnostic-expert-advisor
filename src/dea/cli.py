@@ -330,6 +330,14 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     if args.data_dir:
         os.environ["DEA_DATA_DIR"] = str(Path(args.data_dir).resolve())
     data = os.environ.get("DEA_DATA_DIR", "data")
+    from dea.api.app import find_frontend
+
+    if find_frontend() is None:
+        print(
+            "warning: the web app is not built; only the API will be served. "
+            "Run `npm ci && npm run build` in frontend/ (see README).",
+            file=sys.stderr,
+        )
     print(f"DEA web app on http://{args.host}:{args.port}  (data: {data})")
     uvicorn.run(
         "dea.api.app:create_app", factory=True, host=args.host, port=args.port, reload=args.reload

@@ -2,6 +2,13 @@
 
 ## 2.0.0a2
 
+Packaging
+- The built web app is committed in `frontend/dist` and bundled into the wheel as `dea/static`,
+  so a clone or an installed package serves the UI without node. `dea serve` warns when no
+  build is found and the API's root page says how to build one; `DEA_FRONTEND_DIR` overrides.
+- Dev tools live in the `dev` dependency group only; CI installs with uv.
+- Project page (GitHub Pages from `docs/`) and a shorter README.
+
 Data model
 - Interval table (`intervals/`): infusions with a rate, ventilation episodes and procedures as
   `encounter_id, start, end, variable, value`; `<variable>__hours` features; synthetic episodes.
