@@ -123,6 +123,13 @@ X, y = ds.train()
 `cohort.wide()` gives the resampled time series as a Polars (or pandas) frame and
 `cohort.apply(fn)` runs per-encounter code locally or on SLURM.
 
+## Workshops and support
+
+Together with the Simulation and Data Lab Digital Patient (SDL DP) of
+[NHR4CES](https://www.nhr4ces.de/) we run regular workshops on working with the DEA, give
+personal demonstrations on your own data and help with the setup, from a laptop to the SLURM
+backend on the cluster. Open an issue here or get in touch with the SDL Digital Patient.
+
 ## Documentation
 
 | | |

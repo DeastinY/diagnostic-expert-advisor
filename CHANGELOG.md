@@ -52,6 +52,11 @@ Fixes
   site column (or the first small categorical column) and the most observed variable instead
   of `subject_id` and the alphabetically first variable.
 
+Project page
+- Workshops & support section: regular workshops, personal demonstrations and setup help
+  with the Simulation and Data Lab Digital Patient (SDL DP) of NHR4CES; screenshots of the
+  review step with a histogram and of the profile page with its findings.
+
 Packaging
 - `dea update` (git pull + uv sync in a checkout, `uv tool upgrade` for a tool install),
   `dea update --check`, `dea version`, `dea serve --auto-update` / `DEA_AUTO_UPDATE=1`, and an
