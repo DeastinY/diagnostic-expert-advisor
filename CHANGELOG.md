@@ -2,6 +2,12 @@
 
 ## 2.0.0a2
 
+Fixes
+- The overview no longer fails on cohorts with hundreds of variables: Altair's row limit is
+  off and the coverage heatmap draws the 40 best covered variables. Charts default to the
+  site column (or the first small categorical column) and the most observed variable instead
+  of `subject_id` and the alphabetically first variable.
+
 Packaging
 - The built web app is committed in `frontend/dist` and bundled into the wheel as `dea/static`,
   so a clone or an installed package serves the UI without node. `dea serve` warns when no

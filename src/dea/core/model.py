@@ -426,6 +426,30 @@ class Cohort:
     def static_columns(self) -> list[str]:
         return [c for c in self.static.columns if c != ENCOUNTER_ID]
 
+    def default_static_column(self, max_categories: int = 30) -> str | None:
+        """A sensible column to split charts by: the site column if there is one, otherwise
+        the first categorical column with a handful of values that is not an identifier."""
+        site = self.config.site_column
+        if site and site in self.static.columns:
+            return site
+        for c in self.static_columns:
+            low = c.lower()
+            if low.endswith("id") or low in {"subject", "patient", "mrn", "name"}:
+                continue
+            s = self.static.get_column(c)
+            if not (s.dtype.is_integer() or s.dtype in (pl.String, pl.Boolean, pl.Categorical)):
+                continue
+            if 2 <= s.n_unique() <= max_categories:
+                return c
+        return None
+
+    def default_variable(self) -> str | None:
+        """The first configured plot, else the most observed variable."""
+        if self.config.plots:
+            return self.config.plots[0]
+        counts = self.variable_counts()
+        return counts.get_column(VARIABLE)[0] if counts.height else None
+
     # ---------------------------------------------------------------- features
     def feature_variables(self) -> list[str]:
         """Variables that get per-encounter aggregates in :meth:`features`.

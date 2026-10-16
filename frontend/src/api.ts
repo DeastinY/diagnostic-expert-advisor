@@ -23,6 +23,7 @@ export interface CohortDetail {
   summary: { n_encounters: number; n_variables: number; n_observations: number; los_hours_median: number;
     los_hours_max: number; median_stay: string; longest_stay: string };
   variables: string[]; event_variables: string[]; interval_variables: string[]; static_columns: string[]; derived: string[];
+  defaults: { static_column: string | null; variable: string | null };
 }
 export interface CatalogEntry {
   name: string; source: "static" | "stay" | "aggregate"; label: string; kind: "numeric" | "categorical" | "boolean" | "temporal";
@@ -143,7 +144,7 @@ export const api = {
   processing: (name: string, body: Partial<Processing>) =>
     request<Processing>(`/api/cohorts/${name}/processing`, { method: "PUT", body: JSON.stringify(body) }),
   overviewCharts: (name: string, where: Where, params: Record<string, string | undefined>) =>
-    request<Record<string, object>>(`/api/cohorts/${name}/charts/overview${qs({ ...params, dark: isDark() }, where)}`),
+    request<Record<string, object> & { coverage_shown?: { variables: number; of: number } }>(`/api/cohorts/${name}/charts/overview${qs({ ...params, dark: isDark() }, where)}`),
   profileCharts: (name: string, where: Where) =>
     request<{ gallery: object | null; observations?: object }>(`/api/cohorts/${name}/charts/profile${qs({ dark: isDark() }, where)}`),
   trajectory: (name: string, where: Where, params: Record<string, string | number | undefined>) =>

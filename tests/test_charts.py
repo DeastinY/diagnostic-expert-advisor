@@ -76,3 +76,22 @@ def test_trajectory_and_small_multiples(cohort: Cohort) -> None:
     spec = _ok(charts.small_multiples(enc, ["HR"], None, events=False))
     assert len(spec["vconcat"]) == 1
     assert charts.small_multiples(enc, ["nope"]) is None
+
+
+def test_coverage_heatmap_caps_variables_and_serializes():
+    """A MIMIC-sized variable list must not trip Altair's row limit."""
+    import polars as pl
+
+    from dea import charts
+
+    hours = [h * 4.0 for h in range(42)]
+    rows = {
+        "variable": [f"v{i}" for i in range(400) for _ in hours],
+        "hours": hours * 400,
+        "n": [1] * (400 * len(hours)),
+        "at_risk": [2] * (400 * len(hours)),
+        "fraction": [0.5] * (400 * len(hours)),
+    }
+    chart = charts.coverage_heatmap(pl.DataFrame(rows), max_variables=40)
+    spec = chart.to_dict()  # raised MaxRowsError before
+    assert len(spec["datasets"][next(iter(spec["datasets"]))]) == 40 * len(hours)

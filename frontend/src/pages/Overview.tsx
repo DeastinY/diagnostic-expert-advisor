@@ -15,9 +15,9 @@ export function Overview() {
   const [maxHours, setMaxHours] = useState(168);
   const [tby, setTby] = useState("");
   const cfg = detail?.config;
-  const sc = staticCol || detail?.static_columns[0] || "";
-  const v = variable || cfg?.plots[0] || detail?.variables[0] || "";
-  const tv = tvar || cfg?.plots[0] || detail?.variables[0] || "";
+  const sc = staticCol || detail?.defaults?.static_column || detail?.static_columns[0] || "";
+  const v = variable || detail?.defaults?.variable || cfg?.plots[0] || detail?.variables[0] || "";
+  const tv = tvar || detail?.defaults?.variable || cfg?.plots[0] || detail?.variables[0] || "";
   const charts = useAsync(() => (detail ? api.overviewCharts(name, where, { static_column: sc, variable: v, by: by || undefined }) : Promise.resolve(null)), [name, where.join("|"), sc, v, by, !!detail]);
   const traj = useAsync(() => (detail && tv ? api.trajectory(name, where, { variable: tv, every: grid, max_hours: maxHours, by: tby || undefined }) : Promise.resolve(null)), [name, where.join("|"), tv, grid, maxHours, tby, !!detail]);
   if (error) return <Alert kind="danger">{error}</Alert>;
@@ -60,7 +60,7 @@ export function Overview() {
           </Card>
         )}
         <Card title="When is what measured?">
-          <p className="muted small">Share of encounters still in the unit that have data for each variable, per 4-hour window of the first week.</p>
+          <p className="muted small">Share of encounters still in the unit that have data for each variable, per 4-hour window of the first week.{charts.data?.coverage_shown && charts.data.coverage_shown.of > charts.data.coverage_shown.variables ? ` The ${charts.data.coverage_shown.variables} best covered of ${charts.data.coverage_shown.of} variables.` : ""}</p>
           {charts.loading ? <Spinner /> : <VegaChart spec={charts.data?.coverage_heatmap} />}
         </Card>
         <div className="grid c2">

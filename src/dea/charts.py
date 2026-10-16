@@ -18,6 +18,10 @@ import polars as pl
 from dea.core import TIME, VALUE, VARIABLE, Encounter
 from dea.core.model import END, START
 
+# Charts are sized by the code that builds them (top-N variables, bins, samples), not by
+# Altair's 5,000-row guard, which a real ICU cohort trips on the first page.
+alt.data_transformers.disable_max_rows()
+
 SERIES_LIGHT = [
     "#2a78d6",
     "#eb6834",
@@ -348,8 +352,12 @@ def coverage_heatmap(
     every_hours: float = 4.0,
     dark: bool = False,
     height_per_row: int = 18,
+    max_variables: int = 40,
 ):
-    """Variables × hours since admission, color = share of present encounters with data."""
+    """Variables × hours since admission, color = share of present encounters with data.
+
+    Only the ``max_variables`` best covered variables are drawn; a MIMIC cohort has hundreds.
+    """
     t = theme(dark)
     labels = labels or {}
     if matrix.is_empty():
@@ -360,13 +368,17 @@ def coverage_heatmap(
         .sort(["m", VARIABLE], descending=[True, False])
         .get_column(VARIABLE)
         .to_list()
+    )[:max_variables]
+    df = (
+        matrix.filter(pl.col(VARIABLE).is_in(order))
+        .with_columns(
+            pl.col(VARIABLE)
+            .replace_strict({v: labels.get(v, v) for v in order}, default=pl.col(VARIABLE))
+            .alias("label"),
+            (pl.col("hours") + every_hours).alias("hours2"),
+        )
+        .to_pandas()
     )
-    df = matrix.with_columns(
-        pl.col(VARIABLE)
-        .replace_strict({v: labels.get(v, v) for v in order}, default=pl.col(VARIABLE))
-        .alias("label"),
-        (pl.col("hours") + every_hours).alias("hours2"),
-    ).to_pandas()
     label_order = [labels.get(v, v) for v in order]
     chart = (
         alt.Chart(df)

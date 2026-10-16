@@ -204,6 +204,8 @@ class AdviseApplyIn(BaseModel):
     rename: bool = False
 
 
+COVERAGE_VARIABLES = 40  # rows of the coverage heatmap; MIMIC has hundreds of variables
+
 # ------------------------------------------------------------------------- app
 
 
@@ -289,6 +291,10 @@ def create_app(
             "interval_variables": full.interval_variables,
             "static_columns": full.static_columns,
             "derived": full.list_derived(),
+            "defaults": {
+                "static_column": full.default_static_column(),
+                "variable": full.default_variable(),
+            },
         }
 
     @app.delete("/api/cohorts/{name}", status_code=204)
@@ -466,13 +472,13 @@ def create_app(
             out["los"] = charts.histogram(
                 feats["los_hours"] / 24, "Length of stay", "days", dark=dark
             ).to_dict()
+            matrix = cohort.coverage_matrix(every="4h", max_hours=168)
+            n_vars = matrix.get_column("variable").n_unique() if matrix.height else 0
             heat = charts.coverage_heatmap(
-                cohort.coverage_matrix(every="4h", max_hours=168),
-                cfg.variable_labels,
-                4.0,
-                dark=dark,
+                matrix, cfg.variable_labels, 4.0, dark=dark, max_variables=COVERAGE_VARIABLES
             )
             out["coverage_heatmap"] = heat.to_dict() if heat is not None else None
+            out["coverage_shown"] = {"variables": min(COVERAGE_VARIABLES, n_vars), "of": n_vars}
             if cfg.tags:
                 tags = cohort.tag_matrix()
                 counts = pl.DataFrame(
