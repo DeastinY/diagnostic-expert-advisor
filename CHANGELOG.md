@@ -53,6 +53,8 @@ Fixes
   of `subject_id` and the alphabetically first variable.
 
 Project page
+- Pages deploys a placeholder (`docs/public`) until the page is finalized; the full landing
+  page stays in `docs/` and goes live by pointing the workflow back at it.
 - Workshops & support section: regular workshops, personal demonstrations and setup help
   with the Simulation and Data Lab Digital Patient (SDL DP) of NHR4CES; screenshots of the
   review step with a histogram and of the profile page with its findings.
