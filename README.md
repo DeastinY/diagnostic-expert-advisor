@@ -4,6 +4,8 @@
 ![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
 
+**Project page:** https://deastiny.github.io/diagnostic-expert-advisor/
+
 A workbench for clinical time series. Import hospital data in whatever layout it comes in,
 get it checked and harmonized to standards, look at every patient and every site, and hand a
 clean table to your models.
@@ -96,7 +98,7 @@ X, y = ds.train()
 | [architecture.md](docs/architecture.md) | storage decisions, benchmarks, result cache |
 | [ai-advisor.md](docs/ai-advisor.md), [nlp.md](docs/nlp.md), [hpc.md](docs/hpc.md) | advisor, local NLP connectors, SLURM |
 | [datasets.md](docs/datasets.md) | public datasets and what each one exercises |
-| [docs/index.html](docs/index.html) | project landing page (serve `docs/` with GitHub Pages) |
+| [deastiny.github.io/diagnostic-expert-advisor](https://deastiny.github.io/diagnostic-expert-advisor/) | project page, deployed from `docs/` by the Pages workflow |
 
 ## Development
 
