@@ -143,7 +143,8 @@
   .panel li::before { content: ""; position: absolute; left: 0; top: 3px; width: 18px; height: 18px; border-radius: 6px; background: var(--accent-soft) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238ad1ff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M20 6L9 17l-5-5'/></svg>") center/11px no-repeat; }
   .panel li code { font-size: 13px; padding: 1px 6px; border-radius: 6px; background: var(--surface-2); color: var(--ink); }
   .cmd { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: #0b0f16; border: 1px solid var(--border); font-family: var(--mono); font-size: 13px; color: #cfe4ff; overflow-x: auto; white-space: pre; }
-  .cmd .p { color: var(--muted); }
+  .cmd .p, .cmd .c { color: var(--muted); }
+  .sec-head p code { font-family: var(--mono); font-size: 13px; padding: 1px 6px; border-radius: 6px; background: var(--surface-2); color: var(--ink); }
 
   /* ---------- flow ---------- */
   .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; position: relative; counter-reset: step; }
@@ -165,6 +166,7 @@
   .term .head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.03); }
   .term .head .dots { display: flex; gap: 6px; } .term .head .dots i { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,.14); }
   .term .head .tt { display: flex; gap: 4px; }
+  .term.copy .head .tt { margin-right: 60px; }
   .term .head button { font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer; }
   .term .head button[aria-selected="true"] { background: var(--surface-2); color: var(--ink); border-color: var(--border); }
   .term pre { margin: 0; padding: 16px 18px; font-size: 13.5px; line-height: 1.7; color: #d8e6ff; overflow-x: auto; display: none; }
@@ -220,13 +222,13 @@
   <div class="glow"><span class="a"></span><span class="b"></span><span class="c"></span></div>
   <div class="wrap hero-inner">
     <div>
-      <div class="pill reveal"><span class="dot"></span> Open source · runs entirely on your machine</div>
-      <h1 class="title reveal" data-delay="1">Bring your cohort.<br><span class="grad">Get structure, checks and views in minutes.</span></h1>
-      <p class="lead reveal" data-delay="2">A workbench for clinical time series. Import hospital data in whatever layout it comes in, get it checked and harmonized to standards, look at every patient and every site, and hand a clean table to your models.</p>
+      <div class="pill reveal"><span class="dot"></span> No code needed · open source · runs entirely on your machine</div>
+      <h1 class="title reveal" data-delay="1">Drop in a file.<br><span class="grad">Checks run themselves.<br>Charts come free.</span></h1>
+      <p class="lead reveal" data-delay="2">A workbench for clinical time series that starts in the browser. Point it at a folder or upload a file: DEA detects the layout, runs its checks before anything is written, and renders distributions, site comparisons and patient views on its own. CLI and Python are there when you want to automate.</p>
       <div class="cta reveal" data-delay="3">
         <a class="btn primary" href="#start">Get started</a>
         <a class="btn" href="#explore">See it in action</a>
-        <span class="hint">Polars · Parquet · FastAPI · React</span>
+        <span class="hint">No notebooks · no config files · Polars · FastAPI · React</span>
       </div>
     </div>
     <div class="reveal" data-delay="2" style="position:relative">
@@ -240,7 +242,7 @@
       <div class="stat reveal" data-delay="1"><b data-count="54" data-suffix="M">0</b><span>observations in a tested cohort, on a laptop</span></div>
       <div class="stat reveal" data-delay="2"><b data-count="3" data-suffix=" s">0</b><span>to the feature table of 2,000 encounters</span></div>
       <div class="stat reveal" data-delay="3"><b data-count="46">0</b><span>dictionary concepts with LOINC, UCUM, RxNorm, ATC</span></div>
-      <div class="stat reveal" data-delay="4"><b data-count="4">0</b><span>input layouts: tables, MIMIC-IV, FHIR R4, v1 trees</span></div>
+      <div class="stat reveal" data-delay="4"><b data-count="3">0</b><span>clicks from a raw export to a checked, charted cohort</span></div>
     </div>
   </div>
 </header>
@@ -248,34 +250,34 @@
 <section class="block" id="features">
   <div class="wrap">
     <div class="sec-head reveal">
-      <div class="eyebrow">What it does</div>
-      <h2>Everything between a raw export and a trustworthy table.</h2>
-      <p>Each piece is a click in the web app, a command on the CLI and a function in Python.</p>
+      <div class="eyebrow">UI first</div>
+      <h2>Import in the browser. Checks and charts come with it.</h2>
+      <p>Everything is a click in the web app. The same steps are a command on the CLI and a function in Python for when you want to automate.</p>
     </div>
     <div class="features">
       <article class="feature reveal" data-delay="1" data-tab="import">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></div>
-        <h3>Import anything</h3><p>CSV and Parquet tables, long or wide. MIMIC-IV directories. FHIR bundles and bulk exports. Layout, columns, time unit and units are detected and can be overridden.</p>
+        <h3>Import from the browser</h3><p>Paste a path or upload a file: CSV and Parquet tables, long or wide, MIMIC-IV directories, FHIR bundles. Layout, columns, time unit and units are detected. Nothing to configure first.</p>
         <span class="more">Open detail <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       </article>
       <article class="feature reveal" data-delay="2" data-tab="import">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><path d="M12 2l7 4v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z"/></svg></div>
-        <h3>Check before writing</h3><p>Mixed units, implausible values with the unit that explains them, duplicates, time offsets, two-cluster distributions. One-click fixes, recorded in the cohort.</p>
+        <h3>Checks run automatically</h3><p>On every import and every cohort page, without asking: mixed units, implausible values with the unit that explains them, duplicates, time offsets, two-cluster distributions. Fixes are one click and recorded in the cohort.</p>
         <span class="more">Open detail <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       </article>
-      <article class="feature reveal" data-delay="3" data-tab="harmonize">
+      <article class="feature reveal" data-delay="3" data-tab="patients">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
+        <h3>Visualizations for free</h3><p>The moment a cohort exists it has an overview, distributions, coverage and sampling grids, and a page per patient with the cohort band behind every signal. No notebook, no plotting code.</p>
+        <span class="more">Open detail <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      </article>
+      <article class="feature reveal" data-delay="1" data-tab="harmonize">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h7"/><circle cx="18" cy="16" r="3"/></svg></div>
         <h3>Harmonize to standards</h3><p>LOINC and UCUM for measurements, ICD-9/ICD-10 groups for diagnoses, RxNorm/ATC for drugs, site mapping files for everything local. The advisor fills the gaps.</p>
         <span class="more">Open detail <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       </article>
-      <article class="feature reveal" data-delay="1" data-tab="sites">
+      <article class="feature reveal" data-delay="2" data-tab="sites">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg></div>
         <h3>See every site</h3><p>Case mix, per-site distributions on shared bins, coverage and sampling grids, and findings that tell a unit problem from a population difference.</p>
-        <span class="more">Open detail <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      </article>
-      <article class="feature reveal" data-delay="2" data-tab="patients">
-        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
-        <h3>See every patient</h3><p>Time series with the cohort's median and interquartile band behind them, infusions and ventilation as spans, events on a rail, any grid from raw to hourly.</p>
         <span class="more">Open detail <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       </article>
       <article class="feature reveal" data-delay="3" data-tab="model">
@@ -292,11 +294,11 @@
     <div class="sec-head reveal">
       <div class="eyebrow">Explore</div>
       <h2>Five views, one data model.</h2>
-      <p>Everything below is the real app on a synthetic three-hospital cohort. Click any screenshot to enlarge it.</p>
+      <p>Everything below is the real app on a synthetic three-hospital cohort, as it looks right after an import, with no code written. Click any screenshot to enlarge it.</p>
     </div>
     <div class="explorer reveal">
       <div class="tabs" role="tablist">
-        <button class="tab" role="tab" aria-selected="true" data-tab="import"><span class="n">01</span><span><b>Import &amp; checks</b><span>Preview findings before anything is written</span></span></button>
+        <button class="tab" role="tab" aria-selected="true" data-tab="import"><span class="n">01</span><span><b>Import &amp; checks</b><span>Paste a path, review the findings, import</span></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="harmonize"><span class="n">02</span><span><b>Profile &amp; harmonize</b><span>Suggestions you apply with a click</span></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="sites"><span class="n">03</span><span><b>Across sites</b><span>Where the data differs, and why</span></span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="patients"><span class="n">04</span><span><b>One patient</b><span>Against the whole cohort</span></span></button>
@@ -307,15 +309,17 @@
           <div class="detail">
             <div class="shot"><img src="img/import.png" alt="Import preview listing unit conversions and findings" data-full="img/import.png" data-cap="Check first: units harmonized and findings listed before the cohort is written."></div>
             <div>
-              <h3>Nothing is written until you have seen the findings.</h3>
-              <p class="ink2">The importer detects the layout, reads the units of every row, converts what it recognizes and runs the checks. "Check first" shows the report; "Import" writes the cohort and keeps the report next to it.</p>
+              <h3>Paste a path. Review the findings. Import.</h3>
+              <p class="ink2">The import lives in the app. Point it at a file or folder and DEA detects the layout, reads the units of every row, converts what it recognizes and runs the checks. "Check first" shows the report; "Import" writes the cohort and keeps the report next to it. Nothing is written until you have seen the findings.</p>
               <ul>
+                <li>No configuration: layout, columns, time unit and units are detected, with overrides when needed</li>
                 <li>Mixed units converted per row: °F to °C, percent to fraction, mmol/L to mg/dL</li>
                 <li>Out-of-range values with the unit that would explain them, two-cluster distributions</li>
                 <li>Duplicates, offsets before admission, numbers stored as text, empty encounters</li>
                 <li>Every fix is recorded in <code>cohort.yaml</code>, so values keep their provenance</li>
               </ul>
-              <div class="cmd"><span class="p">$</span> uv run dea import export.csv data/mine
+              <div class="cmd"><span class="c"># the same two steps from the terminal</span>
+<span class="p">$</span> uv run dea import export.csv data/mine
 <span class="p">$</span> uv run dea check data/mine</div>
             </div>
           </div>
@@ -411,8 +415,8 @@
   <div class="wrap">
     <div class="sec-head reveal">
       <div class="eyebrow">Get started</div>
-      <h2>Three commands to a running workbench.</h2>
-      <p>Python 3.11 or newer. <a href="https://docs.astral.sh/uv/">uv</a> handles the environment; pip works too.</p>
+      <h2>Install, start, import in the browser.</h2>
+      <p>Python 3.11 or newer. <a href="https://docs.astral.sh/uv/">uv</a> handles the environment; pip works too. After <code>dea serve</code>, everything else happens in the app.</p>
     </div>
     <div class="qs">
       <div class="term reveal copy" data-delay="1">
@@ -421,28 +425,33 @@
 git clone https://github.com/DeastinY/diagnostic-expert-advisor.git dea
 cd dea &amp;&amp; uv sync --all-extras
 
-<span class="c"># a synthetic cohort over three hospitals, then the app</span>
-uv run dea synth data/demo --n 60 --sites 3
+<span class="c"># start the app; the demo cohort is one click on the landing page</span>
 uv run dea serve --data-dir data
-<span class="g">→ http://127.0.0.1:8000</span></pre>
-        <pre data-t="own"><span class="c"># what DEA recognizes: layout, columns, time unit, units</span>
-uv run dea detect export.csv
+<span class="g">→ http://127.0.0.1:8000</span>
+<span class="g">→ Add data → Demo: three hospitals, checked and charted</span></pre>
+        <pre data-t="own"><span class="c"># start the app and import in the browser</span>
+uv run dea serve --data-dir data
+<span class="g">→ Add data → paste the path → Check first → Import</span>
+<span class="g">→ overview, distributions, patient pages: all there</span>
 
-<span class="c"># checks run first; nothing is written on failure</span>
+<span class="c"># or the same from the terminal</span>
+uv run dea detect export.csv
 uv run dea import export.csv data/mine --static patients.csv
-uv run dea suggest data/mine --apply
-uv run dea serve --data-dir data</pre>
-        <pre data-t="mimic"><span class="c"># free PhysioNet account for the demo; credentialing for the full database</span>
+uv run dea suggest data/mine --apply</pre>
+        <pre data-t="mimic"><span class="c"># demo: free PhysioNet account. Full database: credentialing</span>
 wget -r -N -c -np --user YOU --ask-password \
   https://physionet.org/files/mimic-iv-demo/2.2/
 
-uv run dea import physionet.org/files/mimic-iv-demo/2.2 data/mimic
 uv run dea serve --data-dir data
-<span class="y">→ stays, charts, labs, diagnoses, infusions, procedures, notes</span></pre>
+<span class="g">→ Add data → paste the demo folder → Check first → Import</span>
+<span class="y">→ stays, charts, labs, diagnoses, infusions, procedures</span>
+
+<span class="c"># or from the terminal</span>
+uv run dea import physionet.org/files/mimic-iv-demo/2.2 data/mimic</pre>
         <button class="cp" type="button">Copy</button>
       </div>
       <div class="reveal" data-delay="2">
-        <h3 style="font-size:20px;margin-bottom:10px">Then, in Python</h3>
+        <h3 style="font-size:20px;margin-bottom:10px">When you want to automate: Python</h3>
         <div class="term copy">
           <div class="head"><div class="dots"><i></i><i></i><i></i></div><span class="muted" style="font-size:12px">cohort.py</span></div>
           <pre class="on">from dea.io import load_cohort
@@ -471,6 +480,7 @@ X_train, y_train = ds.train()</pre>
     </div>
     <div class="reveal">
       <details><summary>Does any patient data leave my machine?</summary><p>No. Everything runs locally. The optional AI advisor receives a profile only: aggregate statistics per variable, never encounter ids, timestamps or values. The web app shows exactly what would be sent before you send it.</p></details>
+      <details><summary>Do I have to write code?</summary><p>No. Start the app, add data through the browser, and the checks, suggestions and every chart are there without a notebook. The CLI and the Python API expose the same steps for scripts and pipelines.</p></details>
       <details><summary>How large can a cohort be?</summary><p>Storage is designed for MIMIC-sized cohorts. A synthetic cohort of 2,000 encounters and 54 million observations gives its feature table in about three seconds and a single-encounter lookup in 20 ms, under 2.5 GB of memory. Large gzipped MIMIC tables are converted to Parquet once and scanned lazily.</p></details>
       <details><summary>What does the data have to look like?</summary><p>An encounter id, a time (timestamps or offsets since admission), and either variable/value columns or one column per variable. Non-numeric values become events; a separate static table is optional. MIMIC-IV and FHIR R4 are recognized as directories.</p></details>
       <details><summary>Can I use it with several hospitals?</summary><p>Yes. A static column naming the site turns on the per-site comparison: case mix, distributions, coverage, sampling, and findings with fixes restricted to one site. Datasets can hold out whole hospitals as the test set.</p></details>
