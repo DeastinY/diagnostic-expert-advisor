@@ -51,6 +51,7 @@ export function Builder() {
             </div>
           </Card>
         </div>
+        <DatasetCard />
         <Card title="Saved filters and tags">
           <div className="grid c2">
             {(["filters", "tags"] as const).map((k) => (
@@ -69,5 +70,54 @@ export function Builder() {
         </Card>
       </div>
     </>
+  );
+}
+
+
+function DatasetCard() {
+  const { name, detail, where } = useCohort();
+  const tags = detail?.config.tags ?? [];
+  const [label, setLabel] = useState("");
+  const [cutoff, setCutoff] = useState<string>("24");
+  const [split, setSplit] = useState("encounter");
+  const chosen = label || tags[0]?.label || "";
+  const params = { label: chosen, cutoff: cutoff ? Number(cutoff) : undefined, split };
+  const sum = useAsync(() => (detail && chosen ? api.mlSummary(name, where, params) : Promise.resolve(null)), [name, where.join("|"), chosen, cutoff, split, !!detail]);
+  if (!detail) return null;
+  return (
+    <Card title="Dataset for modelling">
+      <p className="muted small">One row per encounter: features from before the cutoff only, a boolean label evaluated on the whole stay, and a train/test split. Outcome-like and label columns are dropped.</p>
+      <div className="grid c3">
+        <label className="field">Label
+          <select value={chosen} onChange={(e) => setLabel(e.target.value)}>
+            {tags.map((t) => <option key={t.label} value={t.label}>{t.label}</option>)}
+            {detail.static_columns.filter((c) => c === "outcome").map((c) => <option key={c} value={`${c} = 'deceased'`}>{c} = deceased</option>)}
+          </select>
+        </label>
+        <label className="field">Cutoff (hours after admission)<input type="number" min={1} value={cutoff} onChange={(e) => setCutoff(e.target.value)} placeholder="whole stay" /></label>
+        <label className="field">Split
+          <select value={split} onChange={(e) => setSplit(e.target.value)}>
+            <option value="encounter">random by encounter</option>
+            {detail.config.site_column && <option value="site">hold out whole sites</option>}
+            {detail.static_columns.includes("patient_id") && <option value="group:patient_id">by patient</option>}
+          </select>
+        </label>
+      </div>
+      {sum.error && <Alert kind="danger">{sum.error}</Alert>}
+      {sum.loading && <Spinner />}
+      {sum.data && (
+        <div className="stack" style={{ gap: 6 }}>
+          <div className="kpis">
+            <Kpi label="encounters" value={sum.data.n} /><Kpi label="features" value={sum.data.n_features} /><Kpi label="positives" value={sum.data.positives} />
+            <Kpi label="train / test" value={`${sum.data.train} / ${sum.data.test}`} />
+          </div>
+          {sum.data.dropped.length > 0 && <div className="small muted">Dropped to avoid leakage: {sum.data.dropped.join(", ")}</div>}
+          <div className="row">
+            <a className="btn primary" href={api.mlUrl(name, where, params)}>Download Parquet</a>
+            <code className="small">dea ml data/{name} out.parquet --label "{chosen}"{cutoff ? ` --cutoff ${cutoff}` : ""}{split !== "encounter" ? ` --split ${split}` : ""}</code>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }

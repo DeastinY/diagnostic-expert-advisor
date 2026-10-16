@@ -285,6 +285,33 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ml(args: argparse.Namespace) -> int:
+    from dea.io import load_cohort
+    from dea.ml import DatasetSpec, make_dataset
+
+    cohort = load_cohort(args.cohort)
+    spec = DatasetSpec(
+        label=args.label,
+        cutoff_hours=args.cutoff,
+        split=args.split,
+        test_size=args.test_size,
+        seed=args.seed,
+        exclude=args.exclude or [],
+    )
+    ds = make_dataset(cohort, spec)
+    out = Path(args.out)
+    ds.frame().write_parquet(out)
+    info = ds.summary()
+    print(
+        f"{info['n']} encounters, {info['n_features']} features, {info['positives']} positive, "
+        f"train {info['train']} / test {info['test']}"
+    )
+    if info["dropped"]:
+        print("dropped to avoid leakage:", ", ".join(info["dropped"]))
+    print(f"wrote {out}")
+    return 0
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     from dea.io import load_cohort
     from dea.report import write_report
@@ -360,6 +387,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fhir", action="store_true", help="write FHIR R4 NDJSON resources")
     p.add_argument("--every", help="resampling grid for the wide table, e.g. 1h")
     p.set_defaults(func=_cmd_export)
+
+    p = sub.add_parser("ml", help="write an encounter-level (X, y) table with cutoff and split")
+    p.add_argument("cohort")
+    p.add_argument("out")
+    p.add_argument("--label", required=True, help="tag label, static condition or SQL rule")
+    p.add_argument("--cutoff", type=float, help="use only data before this many hours")
+    p.add_argument("--split", default="encounter", help="encounter | site | group:<column>")
+    p.add_argument("--test-size", type=float, default=0.2)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--exclude", nargs="*", help="static columns to leave out")
+    p.set_defaults(func=_cmd_ml)
 
     p = sub.add_parser("info", help="summarize a cohort")
     p.add_argument("cohort")
