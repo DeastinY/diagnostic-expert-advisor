@@ -41,6 +41,7 @@ export interface SiteComparison {
   sizes?: { n: number; [k: string]: unknown }[];
   shown?: { sites: number; of: number; overlay_sites: number; variables: number; of_variables: number };
   profile: { site: string; variable: string; n_encounters: number; coverage: number; n_obs: number; median: number | null; p25: number | null; p75: number | null; interval_s: number | null }[];
+  casemix?: Record<string, number | string | null>[];
   checks: Check[];
   charts: { distributions?: object | null; coverage?: object | null; sampling?: object | null; los?: object | null };
 }
@@ -153,6 +154,10 @@ export const api = {
   adviseStatus: (name: string, where: Where) => request<{ installed: boolean; configured: boolean; model: string; base_url: string | null; payload: object }>(`/api/cohorts/${name}/advise${qs({}, where)}`),
   advise: (name: string, where: Where, body: { model?: string; base_url?: string; api_key?: string }) =>
     request<Recommendation>(`/api/cohorts/${name}/advise${qs({}, where)}`, { method: "POST", body: JSON.stringify(body) }),
+  adviseMap: (name: string, where: Where, body: { model?: string; base_url?: string; api_key?: string }) =>
+    request<{ proposals: { variable: string; concept: string; confidence: number; rationale: string }[]; mapping: Record<string, string>; n_unmatched: number }>(`/api/cohorts/${name}/advise/map${qs({}, where)}`, { method: "POST", body: JSON.stringify(body) }),
+  applyMapping: (name: string, body: { path?: string; mapping?: Record<string, string>; units?: Record<string, string> }) =>
+    request<{ applied: string[]; unused: string[]; unmapped: string[] }>(`/api/cohorts/${name}/mapping`, { method: "POST", body: JSON.stringify(body) }),
   adviseApply: (name: string, recommendation: Recommendation, rename: boolean) =>
     request<{ variables: string[] }>(`/api/cohorts/${name}/advise/apply`, { method: "POST", body: JSON.stringify({ recommendation, rename }) }),
   entities: (name: string) => request<{ available: boolean; n_entities?: number; summary: Record<string, unknown>[] }>(`/api/cohorts/${name}/entities`),

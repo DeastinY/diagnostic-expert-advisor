@@ -351,6 +351,9 @@
   - noradrenalin
   - norepinephrin intravenoes kontinuierlich
   - 221906
+  - noradrenaline
+  - arterenol
+  - levophed
   loinc: ''
   ucum: ug/kg/min
   rxnorm: '7512'
@@ -532,3 +535,214 @@
   - hemoglobin a1c
   - glycated hemoglobin
   - '50852'
+- name: epinephrine
+  label: Epinephrine
+  unit: ug/kg/min
+  loinc: ''
+  ucum: ug/kg/min
+  rxnorm: '3992'
+  atc: C01CA24
+  range:
+  - 0
+  - 2
+  role: medication
+  fill: zero
+  synonyms:
+  - epinephrine
+  - adrenaline
+  - adrenalin
+  - suprarenin
+  - '221289'
+- name: vasopressin
+  label: Vasopressin
+  unit: U/h
+  loinc: ''
+  ucum: U/h
+  rxnorm: '11149'
+  atc: H01BA01
+  range:
+  - 0
+  - 10
+  role: medication
+  fill: zero
+  synonyms:
+  - vasopressin
+  - argipressin
+  - '222315'
+- name: dopamine
+  label: Dopamine
+  unit: ug/kg/min
+  loinc: ''
+  ucum: ug/kg/min
+  rxnorm: '3628'
+  atc: C01CA04
+  range:
+  - 0
+  - 50
+  role: medication
+  fill: zero
+  synonyms:
+  - dopamine
+  - dopamin
+  - '221662'
+- name: dobutamine
+  label: Dobutamine
+  unit: ug/kg/min
+  loinc: ''
+  ucum: ug/kg/min
+  rxnorm: '3616'
+  atc: C01CA07
+  range:
+  - 0
+  - 40
+  role: medication
+  fill: zero
+  synonyms:
+  - dobutamine
+  - dobutamin
+  - '221653'
+- name: propofol
+  label: Propofol
+  unit: mg/kg/h
+  loinc: ''
+  ucum: mg/kg/h
+  rxnorm: '8782'
+  atc: N01AX10
+  range:
+  - 0
+  - 10
+  role: medication
+  fill: zero
+  synonyms:
+  - propofol
+  - disoprivan
+  - '222168'
+- name: midazolam
+  label: Midazolam
+  unit: mg/h
+  loinc: ''
+  ucum: mg/h
+  rxnorm: '6960'
+  atc: N05CD08
+  range:
+  - 0
+  - 30
+  role: medication
+  fill: zero
+  synonyms:
+  - midazolam
+  - dormicum
+  - '221668'
+- name: fentanyl
+  label: Fentanyl
+  unit: ug/h
+  loinc: ''
+  ucum: ug/h
+  rxnorm: '4337'
+  atc: N01AH01
+  range:
+  - 0
+  - 500
+  role: medication
+  fill: zero
+  synonyms:
+  - fentanyl
+  - '221744'
+  - '225942'
+- name: insulin
+  label: Insulin infusion
+  unit: U/h
+  loinc: ''
+  ucum: U/h
+  rxnorm: '5856'
+  atc: A10AB
+  range:
+  - 0
+  - 50
+  role: medication
+  fill: zero
+  synonyms:
+  - insulin
+  - insulin regular
+  - actrapid
+  - '223258'
+- name: heparin
+  label: Heparin
+  unit: U/h
+  loinc: ''
+  ucum: U/h
+  rxnorm: '5224'
+  atc: B01AB01
+  range:
+  - 0
+  - 3000
+  role: medication
+  fill: zero
+  synonyms:
+  - heparin
+  - heparin sodium
+  - '225152'
+- name: furosemide
+  label: Furosemide
+  unit: mg/h
+  loinc: ''
+  ucum: mg/h
+  rxnorm: '4603'
+  atc: C03CA01
+  range:
+  - 0
+  - 50
+  role: medication
+  fill: zero
+  synonyms:
+  - furosemide
+  - lasix
+  - '221794'
+- name: vancomycin
+  label: Vancomycin
+  unit: mg
+  loinc: ''
+  ucum: mg
+  rxnorm: '11124'
+  atc: J01XA01
+  range:
+  - 0
+  - 3000
+  role: medication
+  fill: zero
+  synonyms:
+  - vancomycin
+  - '225798'
+- name: meropenem
+  label: Meropenem
+  unit: mg
+  loinc: ''
+  ucum: mg
+  rxnorm: '29561'
+  atc: J01DH02
+  range:
+  - 0
+  - 3000
+  role: medication
+  fill: zero
+  synonyms:
+  - meropenem
+  - '225883'
+- name: piperacillin_tazobactam
+  label: Piperacillin-tazobactam
+  unit: mg
+  loinc: ''
+  ucum: mg
+  rxnorm: '313134'
+  atc: J01CR05
+  range:
+  - 0
+  - 5000
+  role: medication
+  fill: zero
+  synonyms:
+  - piperacillin
+  - piperacillin/tazobactam
+  - zosyn
+  - tazobac
+  - '225893'

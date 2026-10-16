@@ -6,8 +6,10 @@ files. Observations coded in LOINC are named by the dictionary concept when DEA 
 code; ``valueQuantity`` units are normalized to the concept's UCUM unit; string or coded
 values become events; blood pressure style panels are flattened through ``component``.
 Conditions coded in ICD-10(-CM) or ICD-9-CM become the diagnosis columns of the static
-table. Writing produces one NDJSON file per resource type with LOINC and UCUM codes where
-the dictionary provides them, which is what most interoperability tooling expects.
+table; ``MedicationAdministration`` resources become intervals (rate or dose as the value),
+named by the dictionary concept when the drug is known. Writing produces one NDJSON file per
+resource type with LOINC and UCUM codes where the dictionary provides them, which is what
+most interoperability tooling expects.
 """
 
 from __future__ import annotations
@@ -24,8 +26,11 @@ import polars as pl
 from dea.core.config import CohortConfig
 from dea.core.model import (
     ENCOUNTER_ID,
+    END,
     EVENT_SCHEMA,
+    INTERVAL_SCHEMA,
     LONG_SCHEMA,
+    START,
     TIME,
     VALUE,
     VARIABLE,
@@ -84,6 +89,7 @@ def is_fhir_source(path: Path | str) -> bool:
 
 
 SNOMED = "http://snomed.info/sct"
+RXNORM = "http://www.nlm.nih.gov/research/umls/rxnorm"
 _ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\ufeff]")
 
 
@@ -187,6 +193,7 @@ def import_fhir(path: Path | str, name: str | None = None) -> tuple[Cohort, Impo
     observations: list[dict[str, Any]] = []
     conditions: list[dict[str, Any]] = []
     other_conditions: list[dict[str, Any]] = []
+    administrations: list[dict[str, Any]] = []
     skipped: dict[str, int] = {}
     for res in _iter_resources(root):
         kind = res.get("resourceType")
@@ -216,6 +223,28 @@ def import_fhir(path: Path | str, name: str | None = None) -> tuple[Cohort, Impo
             )
         elif kind == "Observation":
             observations.extend(_observation_rows(res))
+        elif kind == "MedicationAdministration":
+            period = res.get("effectivePeriod") or {}
+            start = period.get("start") or res.get("effectiveDateTime")
+            end = period.get("end") or start
+            med = res.get("medicationCodeableConcept") or {}
+            coding = _coding(med) or {}
+            name = _text(med) or coding.get("code") or "medication"
+            dose = res.get("dosage") or {}
+            rate = dose.get("rateQuantity") or dose.get("dose") or {}
+            if start:
+                administrations.append(
+                    {
+                        "encounter": _ref_id(res.get("context") or res.get("encounter")),
+                        "patient": _ref_id(res.get("subject")),
+                        "start": start,
+                        "end": end,
+                        VARIABLE: name,
+                        "code": coding.get("code", ""),
+                        "num": float(rate["value"]) if rate.get("value") is not None else 1.0,
+                        "unit": rate.get("code") or rate.get("unit"),
+                    }
+                )
         elif kind == "Condition":
             codings = (res.get("code") or {}).get("coding") or []
             when = res.get("recordedDate") or res.get("onsetDateTime")
@@ -392,6 +421,42 @@ def import_fhir(path: Path | str, name: str | None = None) -> tuple[Cohort, Impo
     for v, (_, concept) in targets.items():
         codes.setdefault(v, d.by_name[concept].loinc)
 
+    intervals = None
+    if administrations:
+        adm = pl.DataFrame(
+            administrations,
+            schema={
+                "encounter": pl.String(),
+                "patient": pl.String(),
+                "start": pl.String(),
+                "end": pl.String(),
+                VARIABLE: pl.String(),
+                "code": pl.String(),
+                "num": pl.Float64(),
+                "unit": pl.String(),
+            },
+        ).with_columns(_dt("start"), _dt("end"))
+        adm = _attach(adm.rename({"start": "when"}), windows, report, quiet=True)
+        adm = adm.rename({"when": "start"})
+        # drugs named by RxNorm code or display map onto dictionary concepts where known
+        rename = {}
+        for v in adm.get_column(VARIABLE).unique().to_list():
+            m = d.match(v)
+            if m:
+                rename[v] = m[0].name
+                variable_units.setdefault(m[0].name, m[0].unit)
+        intervals = (
+            adm.lazy()
+            .with_columns(
+                pl.col(VARIABLE).replace(rename).alias(VARIABLE),
+                (pl.col("start") - pl.col(ADMISSION_TIME)).cast(LONG_SCHEMA[TIME]).alias(START),
+                (pl.coalesce(pl.col("end"), pl.col("start")) - pl.col(ADMISSION_TIME))
+                .cast(LONG_SCHEMA[TIME])
+                .alias(END),
+                pl.col("num").alias(VALUE),
+            )
+            .select(list(INTERVAL_SCHEMA))
+        )
     static = enc.drop("end")
     if static.get_column("provider").null_count() == static.height:
         static = static.drop("provider")
@@ -428,12 +493,15 @@ def import_fhir(path: Path | str, name: str | None = None) -> tuple[Cohort, Impo
         variable_codes={k: v for k, v in codes.items() if v},
         site_column=detect_site_column(static),
     )
-    cohort = Cohort(static.sort(ENCOUNTER_ID), dynamic, events=events, config=config)
+    cohort = Cohort(
+        static.sort(ENCOUNTER_ID), dynamic, events=events, intervals=intervals, config=config
+    )
     report.n_encounters = len(cohort)
     counts = cohort.variable_counts()
     report.n_variables = counts.height
     report.n_observations = int(counts["n_observations"].sum()) if counts.height else 0
     report.n_events = int(collect(events.select(pl.len())).item())
+    report.n_intervals = int(collect(cohort.intervals.select(pl.len())).item())
     report.mapping = {
         "encounter": "Encounter.id",
         "time": "Observation.effectiveDateTime - Encounter.period.start",
@@ -606,6 +674,32 @@ def export_fhir(cohort: Cohort, directory: Path | str, batch: int = 500) -> dict
                     "code": {"coding": [{"system": system, "code": parsed.dotted}]},
                 }
 
+    def administrations() -> Iterator[dict[str, Any]]:
+        seq = 0
+        frame = collect(cohort.intervals)
+        pid_by = {
+            r[ENCOUNTER_ID]: str(r.get("patient_id") or r[ENCOUNTER_ID])
+            for r in static.iter_rows(named=True)
+        }
+        rows = frame.select(ENCOUNTER_ID, START, END, VARIABLE, VALUE).iter_rows()
+        for eid, s0, s1, var, val in rows:
+            seq += 1
+            concept = d.by_name.get(var)
+            coding = {"display": concept.label if concept else cfg.label(var)}
+            if concept and concept.rxnorm:
+                coding.update(system=RXNORM, code=concept.rxnorm)
+            unit = cfg.variable_units.get(var) or (concept.unit if concept else "")
+            yield {
+                "resourceType": "MedicationAdministration",
+                "id": f"{eid}-ma{seq}",
+                "status": "completed",
+                "medicationCodeableConcept": {"coding": [coding], "text": cfg.label(var)},
+                "subject": {"reference": f"Patient/{pid_by[eid]}"},
+                "context": {"reference": f"Encounter/{eid}"},
+                "effectivePeriod": {"start": _iso(starts[eid] + s0), "end": _iso(starts[eid] + s1)},
+                "dosage": {"rateQuantity": {"value": val, **({"unit": unit} if unit else {})}},
+            }
+
     written = {
         "Patient": _ndjson(out / "Patient.ndjson", patients()),
         "Encounter": _ndjson(out / "Encounter.ndjson", encounters()),
@@ -613,6 +707,10 @@ def export_fhir(cohort: Cohort, directory: Path | str, batch: int = 500) -> dict
     }
     if "icd_codes" in static.columns:
         written["Condition"] = _ndjson(out / "Condition.ndjson", conditions())
+    if cohort.interval_variables:
+        written["MedicationAdministration"] = _ndjson(
+            out / "MedicationAdministration.ndjson", administrations()
+        )
     return written
 
 

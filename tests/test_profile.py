@@ -48,10 +48,12 @@ def test_prompt_payload_contains_no_patient_level_data(cohort: Cohort) -> None:
         "sampling",
         "variables",
         "events",
+        "intervals",
         "static_columns",
         "warnings",
     }
     assert {e["name"] for e in payload["events"]} == {"Note", "Ventilation_Mode"}
+    assert all({"name", "n_episodes", "coverage"} <= set(i) for i in payload["intervals"])
     vent = next(e for e in payload["events"] if e["name"] == "Ventilation_Mode")
     assert set(vent["categories"] or []) <= {"PSV", "PCV", "VCV", "none"}
     note = next(e for e in payload["events"] if e["name"] == "Note")
