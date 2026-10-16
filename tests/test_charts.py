@@ -71,7 +71,8 @@ def test_trajectory_and_small_multiples(cohort: Cohort) -> None:
     _ok(charts.trajectory(split, "Heart rate", by="sex", dark=True))
     enc = cohort.get(cohort.encounter_ids[0])
     spec = _ok(charts.small_multiples(enc, ["HR", "MAP"], "1h"))
-    assert len(spec["vconcat"]) == 3  # events rail + two panels
+    rails = 1 + (1 if enc.intervals.height else 0)  # events rail, interventions rail
+    assert len(spec["vconcat"]) == 2 + rails
     spec = _ok(charts.small_multiples(enc, ["HR"], None, events=False))
     assert len(spec["vconcat"]) == 1
     assert charts.small_multiples(enc, ["nope"]) is None

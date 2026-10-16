@@ -75,3 +75,14 @@ cohort.save("data/my_cohort")
 FHIR bulk exports (NDJSON) and Bundles import directly, and any cohort exports as FHIR
 resources with LOINC, UCUM and ICD codes. Units are normalized per row during import, and
 ICD-9/ICD-10 diagnoses become `dx_<group>` static columns. See [harmonization.md](harmonization.md).
+
+## Intervals
+
+Interventions that last (infusions with a rate, ventilation episodes, procedures) live in a
+third long table, `intervals/`, with columns `encounter_id, start, end, variable, value`;
+`start` and `end` are offsets from admission like `time`. The feature table carries one
+`<variable>__hours` column per interval variable (total duration in the stay), so tags such
+as `"Ventilation__hours" > 0` work like any other rule; a rule naming an intervention nobody
+received evaluates as zero hours. MIMIC `inputevents` (value = rate) and `procedureevents`
+feed it, `outputevents` become observations, and the encounter view draws the spans as a rail
+above the time series.
