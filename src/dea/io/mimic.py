@@ -42,6 +42,7 @@ from dea.io.importers import ADMISSION_TIME, ImportReport, harmonize_units
 from dea.standards.icd import diagnosis_table
 
 LAB_LEAD_HOURS = 6  # labs drawn shortly before ICU admission still belong to the stay
+SMALL_GZ_BYTES = 64 * 1024 * 1024  # larger gzipped tables are converted to Parquet parts
 
 
 def _find(root: Path, rel: str) -> Path | None:
@@ -59,8 +60,12 @@ def _scan(root: Path, rel: str, required: bool = True) -> pl.LazyFrame | None:
             raise FileNotFoundError(f"{rel}.csv[.gz] not found under {root}")
         return None
     kwargs = dict(try_parse_dates=True, infer_schema_length=10_000, null_values=["", "NULL"])
-    if path.suffix == ".gz":  # compressed CSV cannot be scanned lazily
-        return pl.read_csv(path, **kwargs).lazy()
+    if path.suffix == ".gz":
+        if path.stat().st_size < SMALL_GZ_BYTES:  # demo-sized: read directly
+            return pl.read_csv(path, **kwargs).lazy()
+        from dea.io.compressed import scan_compressed_csv
+
+        return scan_compressed_csv(path, **kwargs)
     return pl.scan_csv(path, **kwargs)
 
 
