@@ -76,8 +76,19 @@ export class ApiError extends Error {
   constructor(status: number, message: string) { super(message); this.status = status; }
 }
 
+function token(): string | null {
+  try { return localStorage.getItem("dea_token"); } catch { return null; }
+}
+export function authHeaders(): Record<string, string> {
+  const t = token();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
+  const res = await fetch(path, { ...init, headers: { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) } });
+  if (res.status === 401 && typeof window !== "undefined") {
+    const t = window.prompt("This DEA instance needs an access token:");
+    if (t) { try { localStorage.setItem("dea_token", t); } catch { /* ignore */ } return request<T>(path, init); }
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try { detail = (await res.json()).detail ?? detail; } catch { /* keep status text */ }
@@ -117,7 +128,7 @@ export const api = {
   upload: async (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-    const res = await fetch("/api/cohorts/upload", { method: "POST", body: fd });
+    const res = await fetch("/api/cohorts/upload", { method: "POST", body: fd, headers: authHeaders() });
     if (!res.ok) throw new ApiError(res.status, (await res.json()).detail ?? res.statusText);
     return (await res.json()) as { staged: string; name: string; detection: Detection };
   },
@@ -140,10 +151,11 @@ export const api = {
   encounters: (name: string, where: Where, params: Record<string, string | number | boolean | undefined>) =>
     request<EncounterPage>(`/api/cohorts/${name}/encounters${qs(params, where)}`),
   encounter: (name: string, eid: string) => request<EncounterDetail>(`/api/cohorts/${name}/encounters/${encodeURIComponent(eid)}`),
-  encounterChart: (name: string, eid: string, variables: string[], every?: string) => {
+  encounterChart: (name: string, eid: string, variables: string[], every?: string, band = true) => {
     const p = new URLSearchParams();
     variables.forEach((v) => p.append("variables", v));
     if (every) p.set("every", every);
+    if (!band) p.set("band", "false");
     if (isDark()) p.set("dark", "true");
     return request<{ spec: object | null }>(`/api/cohorts/${name}/encounters/${encodeURIComponent(eid)}/chart?${p}`);
   },
@@ -161,12 +173,12 @@ export const api = {
   adviseApply: (name: string, recommendation: Recommendation, rename: boolean) =>
     request<{ variables: string[] }>(`/api/cohorts/${name}/advise/apply`, { method: "POST", body: JSON.stringify({ recommendation, rename }) }),
   entities: (name: string) => request<{ available: boolean; n_entities?: number; summary: Record<string, unknown>[] }>(`/api/cohorts/${name}/entities`),
-  reportUrl: (name: string, where: Where) => `/api/cohorts/${name}/report${qs({}, where)}`,
-  exportUrl: (name: string, where: Where, every?: string, fill?: string) => `/api/cohorts/${name}/export${qs({ every, fill }, where)}`,
-  fhirExportUrl: (name: string, where: Where) => `/api/cohorts/${name}/export/fhir${qs({}, where)}`,
+  reportUrl: (name: string, where: Where) => `/api/cohorts/${name}/report${qs({ token: token() ?? undefined }, where)}`,
+  exportUrl: (name: string, where: Where, every?: string, fill?: string) => `/api/cohorts/${name}/export${qs({ every, fill, token: token() ?? undefined }, where)}`,
+  fhirExportUrl: (name: string, where: Where) => `/api/cohorts/${name}/export/fhir${qs({ token: token() ?? undefined }, where)}`,
   mlSummary: (name: string, where: Where, params: { label: string; cutoff?: number; split: string; test_size?: number }) =>
     request<{ n: number; n_features: number; positives: number; train: number; test: number; dropped: string[]; features: string[] }>(`/api/cohorts/${name}/ml/summary${qs(params, where)}`),
-  mlUrl: (name: string, where: Where, params: { label: string; cutoff?: number; split: string; test_size?: number }) => `/api/cohorts/${name}/ml${qs(params, where)}`,
+  mlUrl: (name: string, where: Where, params: { label: string; cutoff?: number; split: string; test_size?: number }) => `/api/cohorts/${name}/ml${qs({ ...params, token: token() ?? undefined }, where)}`,
 };
 
 export function useWhereParam(search: URLSearchParams): Where { return search.getAll("where"); }

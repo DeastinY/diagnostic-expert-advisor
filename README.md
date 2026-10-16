@@ -126,6 +126,15 @@ LLM such as Ollama. All run locally; entities land in `derived/entities.parquet`
 Entities tab, and can become `mentions: <entity>` tags. Note that the default `torch` wheel is
 the CUDA build; install the CPU wheel from the PyTorch index if you do not have a GPU.
 
+## Sharing an instance
+
+`dea serve` is single-user by default. Set `DEA_TOKEN=<secret>` to require a bearer token on
+every API call (the web app asks for it once and remembers it in the browser); put a TLS
+proxy in front for anything beyond a trusted network. The report (`dea report`) now carries
+the data quality checks, the per-site case mix and findings, and the sub-cohorts derived from
+a cohort, and the encounter view draws the cohort's median and interquartile band behind each
+patient's series.
+
 ## In Python
 
 ```python
