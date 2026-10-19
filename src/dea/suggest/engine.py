@@ -115,7 +115,13 @@ def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Sugges
         detail = f"Recognized as {concept.label}" + (f" ({concept.unit})" if concept.unit else "")
         detail += f"; match confidence {score:.0%}."
         if recorded and concept.unit and recorded != concept.unit:
-            detail += f" Recorded in {recorded}, converted to {concept.unit}."
+            ucum = units.to_ucum(recorded) or recorded
+            if ucum == concept.ucum:
+                pass
+            elif units.conversion(ucum, concept.ucum, concept.name) is not None:
+                detail += f" Recorded in {recorded}, converted to {concept.unit}."
+            else:
+                detail += f" Recorded in {recorded}, which does not convert to {concept.unit}."
         if joins:
             detail += " Becomes one variable with " + ", ".join(f"'{v}'" for v in joins) + "."
         out.append(
