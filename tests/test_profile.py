@@ -88,3 +88,16 @@ def test_flags_on_handcrafted_data() -> None:
     assert any("no observations" in w for w in prof.warnings)
     assert any("identifier" in w for w in prof.warnings)
     assert next(s for s in prof.static_columns if s.name == "note").kind == "categorical"
+
+
+def test_profile_groups_constant_warnings() -> None:
+    # a real ICU export has hundreds of constant items; one warning per kind, not per item
+    from dea.profile.profiler import _grouped
+
+    assert _grouped(["a", "b"], "is constant", "are constant") == [
+        "'a' is constant",
+        "'b' is constant",
+    ]
+    many = [f"v{i}" for i in range(9)]
+    (line,) = _grouped(many, "is constant", "are constant")
+    assert line.startswith("9 variables are constant: 'v0', 'v1', 'v2', 'v3', 'v4' and 4 more")

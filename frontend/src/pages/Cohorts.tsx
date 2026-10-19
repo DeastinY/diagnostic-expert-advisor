@@ -57,7 +57,7 @@ export function Cohorts() {
           <>
             <Card title="Add data">
               <Tabs tabs={["Import", "Demo"]} value={tab} onChange={setTab} />
-              {tab === "Demo" ? <DemoForm onDone={(n) => nav(`/c/${n}`)} /> : <ImportWizard dropped={dropped} onMore={reload} onDone={(n, where) => nav(where === "profile" ? `/c/${n}/profile` : `/c/${n}`)} />}
+              {tab === "Demo" ? <DemoForm onDone={(n) => nav(`/c/${n}`)} /> : <ImportWizard dropped={dropped} onMore={reload} onImported={reload} onDone={(n, where) => nav(where === "profile" ? `/c/${n}/profile` : `/c/${n}`)} />}
             </Card>
             <div className="card empty" style={{ textAlign: "left", padding: "22px 24px" }}>
               <h2 style={{ marginTop: 0 }}>How it goes</h2>
@@ -84,7 +84,7 @@ export function Cohorts() {
             </div>
             <Card title="Add data">
               <Tabs tabs={["Import", "Demo"]} value={tab} onChange={setTab} />
-              {tab === "Demo" ? <DemoForm onDone={(n) => nav(`/c/${n}`)} /> : <ImportWizard dropped={dropped} onMore={reload} onDone={(n, where) => nav(where === "profile" ? `/c/${n}/profile` : `/c/${n}`)} />}
+              {tab === "Demo" ? <DemoForm onDone={(n) => nav(`/c/${n}`)} /> : <ImportWizard dropped={dropped} onMore={reload} onImported={reload} onDone={(n, where) => nav(where === "profile" ? `/c/${n}/profile` : `/c/${n}`)} />}
             </Card>
           </>
         )}

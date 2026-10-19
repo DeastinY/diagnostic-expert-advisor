@@ -45,7 +45,7 @@ export function Overview() {
             <Kpi label="Observations" value={s.n_observations.toLocaleString()} />
             <Kpi label="Median stay" value={s.median_stay} />
             <Kpi label="Longest stay" value={s.longest_stay} />
-            <Kpi label="Events" value={detail.event_variables.length} />
+            <Kpi label="Event types" value={detail.event_variables.length} />
           </div>
         </Card>
         {charts.error && <Alert kind="danger">{charts.error}</Alert>}

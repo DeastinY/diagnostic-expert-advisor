@@ -31,6 +31,7 @@
   - map
   - mean arterial pressure
   - arterial blood pressure mean
+  - non invasive blood pressure mean
   - mittlerer arterieller druck
   - nibp mean
   - 220052
@@ -50,6 +51,8 @@
   - sap
   - systolic
   - arterial blood pressure systolic
+  - non invasive blood pressure systolic
+  - nibp systolic
   - systolischer druck
   - 220050
   - 220179

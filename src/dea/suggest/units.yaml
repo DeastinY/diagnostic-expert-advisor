@@ -48,6 +48,8 @@ conversions:
   - { from: "umol/L", to: "mg/dL", factor: 0.0113122, concept: creatinine }
   - { from: "umol/L", to: "mg/dL", factor: 0.0584795, concept: bilirubin }
   - { from: "mg/dL", to: "mmol/L", factor: 0.111, concept: lactate }
+  # MIMIC and others record pH with the unit "units": for a pH that is the pH scale
+  - { from: "U", to: "[pH]", factor: 1, concept: ph }
   - { from: "mmol/L", to: "mg/dL", factor: 9.009, concept: lactate }
   # monovalent ions: 1 mEq = 1 mmol
   - { from: "meq/L", to: "mmol/L", factor: 1, concept: sodium }

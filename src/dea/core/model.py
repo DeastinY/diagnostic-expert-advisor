@@ -936,7 +936,10 @@ class Cohort:
         ``variable, hours, n, at_risk, fraction``.
         """
         step = duration_seconds(every)
-        lf = self.dynamic.filter(pl.col(TIME) <= pl.duration(hours=max_hours))
+        lf = self.dynamic.filter(
+            (pl.col(TIME) >= pl.duration(seconds=0))
+            & (pl.col(TIME) <= pl.duration(hours=max_hours))
+        )
         if variables is not None:
             lf = lf.filter(pl.col(VARIABLE).is_in(list(variables)))
         cell = ((pl.col(TIME).dt.total_seconds() // step) * step / 3600.0).alias("hours")

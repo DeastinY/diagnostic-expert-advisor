@@ -153,10 +153,12 @@ DEA_TOKEN=secret uv run dea serve   # bearer-token protection for a shared insta
 
 ## Status
 
-Alpha (2.0.0a2). So far tested on synthetic cohorts up to 2,000 encounters and 54 million
-observations, on synthetic tables in the MIMIC-IV layout and on the SMART on FHIR sample data
-(631 Synthea patients, 30+ organizations). Not yet tested: a real ICU dataset, the SLURM
-backend on a real cluster, the GLiNER and transformer NLP connectors with downloaded weights.
+Alpha (2.0.0a2). Tested on the MIMIC-IV demo (100 patients, 140 ICU stays, 306,000
+observations, imported in under a minute), on synthetic cohorts up to 2,000 encounters and 54
+million observations, on synthetic tables in the MIMIC-IV layout and on the SMART on FHIR
+sample data (631 Synthea patients, 30+ organizations). Not yet tested: the full MIMIC-IV, the
+SLURM backend on a real cluster, the GLiNER and transformer NLP connectors with downloaded
+weights.
 
 ## License
 

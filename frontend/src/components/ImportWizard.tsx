@@ -108,7 +108,7 @@ function BusyLine({ busy, stage }: { busy: string; stage: { text: string; elapse
   );
 }
 
-export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: string, where: "overview" | "profile") => void; onMore?: () => void; dropped?: Picked[] | null }) {
+export function ImportWizard({ onDone, onMore, onImported, dropped }: { onDone: (name: string, where: "overview" | "profile") => void; onMore?: () => void; onImported?: () => void; dropped?: Picked[] | null }) {
   const [step, setStep] = useState(0);
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
@@ -243,6 +243,7 @@ export function ImportWizard({ onDone, onMore, dropped }: { onDone: (name: strin
       }
       setResult({ name: r.name, report: r.report, applied: sugg });
       setStep(3);
+      onImported?.(); // the cohort list beside the wizard shows the new cohort at once
       toast(`Imported ${r.report.n_encounters} encounters`);
     } catch (e) { fail(e); } finally { setBusy(null); setStage(null); }
   };

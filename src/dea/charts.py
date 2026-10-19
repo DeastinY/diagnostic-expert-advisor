@@ -343,6 +343,29 @@ def distribution_gallery(
     return _apply(chart, t)
 
 
+MAX_RAIL_ROWS = 12  # a MIMIC stay has over a hundred kinds of events; the rail shows the busiest
+
+
+def _rail_rows(frame: pl.DataFrame, title: str) -> tuple[pl.DataFrame, list[str], str]:
+    """Keep the ``MAX_RAIL_ROWS`` most frequent kinds of a rail and say how many were left out."""
+    kinds = (
+        frame.group_by(VARIABLE)
+        .agg(pl.len().alias("n"))
+        .sort(["n", VARIABLE], descending=[True, False])
+        .get_column(VARIABLE)
+        .to_list()
+    )
+    keep = kinds[:MAX_RAIL_ROWS]
+    if len(kinds) > len(keep):
+        title = f"{title} ({len(keep)} of {len(kinds)} kinds, by frequency)"
+        frame = frame.filter(pl.col(VARIABLE).is_in(keep))
+    return frame, keep, title
+
+
+def _cycle(palette: Sequence[str], n: int) -> list[str]:
+    return [palette[i % len(palette)] for i in range(n)]
+
+
 # ------------------------------------------------------------------------------- coverage
 
 
@@ -541,7 +564,7 @@ def small_multiples(
             (pl.col(START).dt.total_seconds() / 3600.0).alias("start_h"),
             (pl.col(END).dt.total_seconds() / 3600.0).alias("end_h"),
         ).select("start_h", "end_h", VARIABLE, VALUE)
-        kinds_iv = list(dict.fromkeys(iv.get_column(VARIABLE).to_list()))[:8]
+        iv, kinds_iv, title_iv = _rail_rows(iv, "Interventions")
         rail_iv = (
             alt.Chart(iv.to_pandas())
             .mark_bar(height=10, cornerRadius=2)
@@ -553,7 +576,7 @@ def small_multiples(
                 y=alt.Y(f"{VARIABLE}:N", title=None, axis=alt.Axis(labelLimit=160)),
                 color=alt.Color(
                     f"{VARIABLE}:N",
-                    scale=alt.Scale(domain=kinds_iv, range=list(t.series[: len(kinds_iv)])),
+                    scale=alt.Scale(domain=kinds_iv, range=_cycle(t.series, len(kinds_iv))),
                     legend=None,
                 ),
                 tooltip=[
@@ -566,13 +589,15 @@ def small_multiples(
             .properties(
                 height=14 * len(kinds_iv) + 10,
                 width="container",
-                title=alt.Title("Interventions", fontSize=11, color=t.ink2),
+                title=alt.Title(title_iv, fontSize=11, color=t.ink2),
             )
         )
         panels.append(rail_iv)
     if events and encounter.events.height:
-        ev = encounter.events.with_columns(hours).select("hours", VARIABLE, VALUE).to_pandas()
-        kinds = list(dict.fromkeys(ev[VARIABLE]))[:8]
+        ev_frame, kinds, title_ev = _rail_rows(
+            encounter.events.with_columns(hours).select("hours", VARIABLE, VALUE), "Events"
+        )
+        ev = ev_frame.to_pandas()
         rail = (
             alt.Chart(ev)
             .mark_tick(thickness=2, size=14)
@@ -581,7 +606,7 @@ def small_multiples(
                 y=alt.Y(f"{VARIABLE}:N", title=None, axis=alt.Axis(labelLimit=160)),
                 color=alt.Color(
                     f"{VARIABLE}:N",
-                    scale=alt.Scale(domain=kinds, range=list(t.series[1 : 1 + len(kinds)])),
+                    scale=alt.Scale(domain=kinds, range=_cycle(t.series[1:], len(kinds))),
                     legend=None,
                 ),
                 tooltip=[
@@ -593,7 +618,7 @@ def small_multiples(
             .properties(
                 height=14 * len(kinds) + 10,
                 width="container",
-                title=alt.Title("Events", fontSize=11, color=t.ink2),
+                title=alt.Title(title_ev, fontSize=11, color=t.ink2),
             )
         )
         panels.append(rail)

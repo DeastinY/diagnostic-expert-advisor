@@ -454,6 +454,17 @@ def _f(x: Any) -> float | None:
     return None if x is None else float(x)
 
 
+_GROUP_AFTER = 5
+
+
+def _grouped(names: list[str], singular: str, plural: str) -> list[str]:
+    """One warning per name while there are few, one summary line once there are many."""
+    if len(names) <= _GROUP_AFTER:
+        return [f"'{n}' {singular}" for n in names]
+    shown = ", ".join(f"'{n}'" for n in names[:_GROUP_AFTER])
+    return [f"{len(names)} variables {plural}: {shown} and {len(names) - _GROUP_AFTER} more"]
+
+
 def profile_cohort(cohort: Cohort) -> CohortProfile:
     """Compute a :class:`CohortProfile` for ``cohort``."""
     n_enc = len(cohort)
@@ -470,13 +481,23 @@ def profile_cohort(cohort: Cohort) -> CohortProfile:
     for v in variables:
         if "suspected_identifier" in v.flags:
             warnings.append(f"'{v.name}' looks like an identifier, not a measurement")
-        if "constant" in v.flags:
-            warnings.append(f"'{v.name}' is constant and carries no information")
-        if "constant_per_encounter" in v.flags:
-            warnings.append(
-                f"'{v.name}' never changes within an encounter; it is a static attribute "
-                "recorded as a time series"
-            )
+    # a real ICU export has hundreds of sparse constant items: one line per kind, not per item
+    constant = [v.name for v in variables if "constant" in v.flags]
+    per_encounter = [v.name for v in variables if "constant_per_encounter" in v.flags]
+    warnings.extend(
+        _grouped(
+            constant,
+            "is constant and carries no information",
+            "are constant and carry no information",
+        )
+    )
+    warnings.extend(
+        _grouped(
+            per_encounter,
+            "never changes within an encounter; it is a static attribute recorded as a time series",
+            "never change within an encounter; they are static attributes recorded as time series",
+        )
+    )
     low = [v.name for v in variables if "low_coverage" in v.flags]
     if low:
         warnings.append(f"{len(low)} variable(s) are present in fewer than 10% of encounters")

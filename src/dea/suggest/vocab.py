@@ -16,6 +16,9 @@ _PAREN = re.compile(r"\(.*?\)")
 _SUFFIX = re.compile(r"\b(infusion|rate|drip|dose|dosage|administration|continuous)\b", re.I)
 # Words that make a name a *different* measurement than the concept it would otherwise match:
 # another specimen, a drug level instead of a dose, a device setting. Such names are left alone.
+# Words that pick one of several related measurements; a name mentioning one never matches a
+# synonym mentioning another ("non invasive blood pressure systolic" is not diastolic).
+_POLES = ("systolic", "diastolic", "mean")
 _OTHER = re.compile(
     r"\b(urine|urinary|dipstick|stool|sputum|csf|pleural|ascit\w*|drain\w*|gastric|fluid|"
     r"trough|peak|random|level|set|alarm|limit|goal|target|min(imum)?|max(imum)?)\b",
@@ -43,6 +46,11 @@ def normalize(text: str) -> str:
     return _NORMALIZE.sub(" ", text).strip()
 
 
+def _pole(text: str) -> set[str]:
+    words = set(text.split())
+    return {p for p in _POLES if p in words}
+
+
 class Dictionary:
     def __init__(self, concepts: list[Concept]) -> None:
         self.concepts = concepts
@@ -68,7 +76,10 @@ class Dictionary:
         if stripped and stripped != bare and stripped in self._index:
             return self._index[stripped], 0.95
         best: tuple[Concept, float] | None = None
+        pole = _pole(key)
         for syn, concept in self._index.items():
+            if pole and _pole(syn) not in (set(), pole):
+                continue
             score = SequenceMatcher(None, key, syn).ratio()
             if score >= threshold and (best is None or score > best[1]):
                 best = (concept, score)

@@ -71,3 +71,14 @@ def test_suggestions_on_mimic(tmp_path: Path) -> None:
     assert sugg["rename:Heart Rate"].action["rename"] == {"Heart Rate": "heart_rate"}
     assert "static:Admission Weight (Kg)" in sugg
     assert "plots" in sugg and "Heart Rate" in sugg["plots"].action["plots"]
+
+
+def test_matching_keeps_systolic_diastolic_and_mean_apart() -> None:
+    # MIMIC's non-invasive items: the fuzzy pass used to send "systolic" to the
+    # diastolic concept because the dbp synonym differed by one word
+    d = load_dictionary()
+    assert d.match("Non Invasive Blood Pressure systolic")[0].name == "sbp"
+    assert d.match("Non Invasive Blood Pressure diastolic")[0].name == "dbp"
+    assert d.match("Non Invasive Blood Pressure mean")[0].name == "map"
+    manual = d.match("Manual Blood Pressure Systolic Left")
+    assert manual is None or manual[0].name != "dbp"

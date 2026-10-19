@@ -84,6 +84,11 @@ def _datetime(lf: pl.LazyFrame, *columns: str) -> pl.LazyFrame:
     return lf.with_columns(exprs) if exprs else lf
 
 
+def _label(col: pl.Expr) -> pl.Expr:
+    """Item labels as variable names: single spaces, no padding ("Side  Rails" is "Side Rails")."""
+    return col.cast(pl.String()).str.replace_all(r"\s+", " ").str.strip_chars()
+
+
 def is_mimic_dir(path: Path | str) -> bool:
     root = Path(path)
     return _find(root, "icu/icustays") is not None and _find(root, "icu/chartevents") is not None
@@ -161,7 +166,7 @@ def import_mimic(path: Path | str, name: str | None = None) -> tuple[Cohort, Imp
         report.warnings.append("hosp/diagnoses_icd not found; no diagnosis columns")
 
     d_items = _scan(root, "icu/d_items").select(
-        pl.col("itemid").cast(pl.Int64()), pl.col("label").alias(VARIABLE)
+        pl.col("itemid").cast(pl.Int64()), _label(pl.col("label")).alias(VARIABLE)
     )
     chart = (
         _datetime(_scan(root, "icu/chartevents"), "charttime")
@@ -191,9 +196,19 @@ def import_mimic(path: Path | str, name: str | None = None) -> tuple[Cohort, Imp
 
     labevents = _scan(root, "hosp/labevents", required=False)
     if labevents is not None:
-        d_lab = _scan(root, "hosp/d_labitems").select(
-            pl.col("itemid").cast(pl.Int64()), pl.col("label").alias(VARIABLE)
-        )
+        d_lab = _scan(root, "hosp/d_labitems")
+        label = _label(pl.col("label"))
+        if "fluid" in d_lab.collect_schema():
+            # the same label names different measurements per specimen: urine pH is not
+            # blood pH, urine WBC is counted per field, not per litre
+            fluid = pl.col("fluid").cast(pl.String()).str.strip_chars()
+            named = label.str.to_lowercase().str.contains(fluid.str.to_lowercase(), literal=True)
+            label = (
+                pl.when(fluid.is_null() | (fluid == "Blood") | named)  # "Creatinine, Urine"
+                .then(label)
+                .otherwise(label + " (" + fluid + ")")
+            )
+        d_lab = d_lab.select(pl.col("itemid").cast(pl.Int64()), label.alias(VARIABLE))
         labs = (
             labevents.select(
                 "hadm_id",

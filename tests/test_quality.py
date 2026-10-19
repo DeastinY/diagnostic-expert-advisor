@@ -131,3 +131,20 @@ def test_import_runs_checks(tmp_path: Path) -> None:
     assert imported.config.variable_codes["Temp"] == "8310-5"
     assert any(c.id == "units:Temp" for c in report.checks)
     assert all(not c.id.startswith("range:Temp") for c in report.checks)
+
+
+def test_ph_recorded_in_units_is_a_ph() -> None:
+    # MIMIC writes valueuom "units" for pH; that is the pH scale, not something to split off
+    lf = pl.LazyFrame(
+        {
+            "variable": ["pH", "pH", "Heparin"],
+            "value": [7.4, 7.3, 500.0],
+            "unit": ["units", "[pH]", "units"],
+        }
+    )
+    out, reports = normalize_units(lf, "unit", {"pH": ("[pH]", "ph")})
+    frame = out.collect()
+    assert frame.filter(pl.col("variable") == "pH")["unit"].to_list() == ["[pH]", "[pH]"]
+    assert frame["variable"].n_unique() == 2
+    (rep,) = reports
+    assert rep.converted == {"U": 1} and not rep.unconvertible

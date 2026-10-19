@@ -95,3 +95,16 @@ def test_coverage_heatmap_caps_variables_and_serializes():
     chart = charts.coverage_heatmap(pl.DataFrame(rows), max_variables=40)
     spec = chart.to_dict()  # raised MaxRowsError before
     assert len(spec["datasets"][next(iter(spec["datasets"]))]) == 40 * len(hours)
+
+
+def test_coverage_matrix_starts_at_admission(cohort: Cohort) -> None:
+    # a chart row dated a year before admission must not stretch the heatmap's axis
+    early = cohort.dynamic.head(1).with_columns(pl.duration(hours=-8000).alias("time"))
+    shifted = Cohort(
+        cohort.static,
+        pl.concat([cohort.dynamic, early]),
+        events=cohort.events,
+        config=cohort.config,
+    )
+    m = shifted.coverage_matrix(every="4h", max_hours=48)
+    assert (m["hours"] >= 0).all()

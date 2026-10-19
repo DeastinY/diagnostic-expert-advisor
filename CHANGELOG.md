@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+First run on real data: the MIMIC-IV demo (100 patients, 140 ICU stays, 306k observations)
+imports in under a minute, on the command line and through the guided import.
+
+MIMIC-IV importer
+- Lab items are named by label and specimen: urine pH no longer lands in the blood pH
+  variable, urine WBC (per field) is its own variable instead of a split-off unit.
+- pH recorded with the unit "units" is accepted as a pH instead of being split off.
+- Item labels are tidied ("Side  Rails" and "Side Rails" were two variables).
+
+Harmonization
+- Name matching keeps systolic, diastolic and mean apart: "Non Invasive Blood Pressure
+  systolic" matched the diastolic concept at 93%.
+
+Web app and charts
+- The coverage heatmap starts at admission; a chart row dated a year earlier no longer
+  stretches the axis to minus 9,000 hours.
+- The interventions and events rails on a patient page show the twelve busiest kinds and say
+  how many there are in all; a MIMIC stay has over a hundred.
+- The profile lists constant and static-as-time-series variables as one line per kind once
+  there are more than five, instead of hundreds of warnings.
+- The overview tile counts event types and says so; the cohort list refreshes when an import
+  finishes.
+
 ## 2.0.0a2
 
 Web app
