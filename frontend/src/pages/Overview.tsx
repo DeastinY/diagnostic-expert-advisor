@@ -51,7 +51,11 @@ export function Overview() {
         {charts.error && <Alert kind="danger">{charts.error}</Alert>}
         <div className="grid c2">
           <Card title="Length of stay">{charts.loading ? <Spinner /> : <VegaChart spec={charts.data?.los} height={220} />}</Card>
-          {charts.data?.tags ? <Card title="Tags"><VegaChart spec={charts.data.tags} /></Card> : <Card title="Tags"><p className="muted small">No tags configured yet. Add them in Build cohort or apply the suggestions.</p></Card>}
+          {charts.data?.tags ? (
+            <Card title={charts.data.tags_shown && charts.data.tags_shown.of > charts.data.tags_shown.shown ? `Tags · the ${charts.data.tags_shown.shown} most frequent of ${charts.data.tags_shown.of}` : "Tags"}>
+              <VegaChart spec={charts.data.tags} height={220} />
+            </Card>
+          ) : <Card title="Tags"><p className="muted small">No tags configured yet. Add them in Build cohort or apply the suggestions.</p></Card>}
         </div>
         {filtered && (
           <Card title="Selection versus the rest of the cohort">

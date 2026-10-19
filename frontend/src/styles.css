@@ -71,7 +71,7 @@ code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); 
 .spread { justify-content: space-between; }
 
 /* kpis */
-.kpis { display: flex; gap: 28px; flex-wrap: wrap; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 16px 24px; }
 .kpi .v { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
 .kpi .l { color: var(--muted); font-size: 12px; }
 .kpi .d { color: var(--accent); font-size: 12px; }

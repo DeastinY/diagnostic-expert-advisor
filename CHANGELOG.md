@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Overview
+- The length-of-stay histogram counts whole days, the tags card shows the eight most frequent
+  tags so it stays the height of the histogram, the KPI tiles spread across the card, and the
+  coverage heatmap has a day axis and its legend on top.
+- Cached chart results are keyed on the code as well as the cohort's files, so a chart change
+  shows on an existing cohort without re-importing it.
+
 Review step: what a fix does, with the data
 - Duplicates are two findings: exact repeats (same value, safe to drop, listed by variable)
   and conflicting values at the same timestamp (two lab runs, a correction), which are listed

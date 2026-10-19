@@ -82,7 +82,8 @@ class CohortStore:
         signature are removed the next time a result is written.
         """
         path = self.path(name)
-        sig = hashlib.sha1(str(self._signature(path)).encode()).hexdigest()[:10]
+        # the cohort's files and the code that draws from them: a chart change must show
+        sig = hashlib.sha1(f"{self._signature(path)}|{CODE_SIGNATURE}".encode()).hexdigest()[:10]
         pdig = hashlib.sha1(json.dumps(params, sort_keys=True, default=str).encode()).hexdigest()[
             :12
         ]
@@ -232,6 +233,18 @@ class AdviseApplyIn(BaseModel):
 
 NO_PATHS: list[str] = Form(default=[])  # form field of the folder upload, see upload_files
 COVERAGE_VARIABLES = 40  # rows of the coverage heatmap; MIMIC has hundreds of variables
+
+
+def _code_signature() -> str:
+    """A digest of the package's source files, so cached results outlive a cohort's files
+    but not a change to the code that computes them."""
+    root = Path(__file__).resolve().parent.parent
+    stamps = sorted(f"{p.relative_to(root)}:{p.stat().st_mtime_ns}" for p in root.rglob("*.py"))
+    return hashlib.sha1("\n".join(stamps).encode()).hexdigest()[:10]
+
+
+CODE_SIGNATURE = _code_signature()
+TAG_ROWS = 8  # tags on the overview: as many rows as fit beside the length-of-stay histogram
 
 # ------------------------------------------------------------------------- app
 
@@ -793,7 +806,7 @@ def create_app(
         out: dict[str, Any] = {}
         if feats.height:
             out["los"] = charts.histogram(
-                feats["los_hours"] / 24, "Length of stay", "days", dark=dark
+                feats["los_hours"] / 24, "Length of stay", "days", dark=dark, integer=True
             ).to_dict()
             matrix = cohort.coverage_matrix(every="4h", max_hours=168)
             n_vars = matrix.get_column("variable").n_unique() if matrix.height else 0
@@ -810,9 +823,12 @@ def create_app(
                         "encounters": [int(tags[r.label].sum()) for r in cfg.tags],
                     }
                 )
+                # the busiest tags only, so the card stays the height of the LOS histogram
+                top = counts.sort(["encounters", "tag"], descending=[True, False]).head(TAG_ROWS)
                 out["tags"] = charts.horizontal_bars(
-                    counts, "tag", "encounters", "Encounters", dark=dark
+                    top, "tag", "encounters", "Encounters", dark=dark
                 ).to_dict()
+                out["tags_shown"] = {"shown": top.height, "of": counts.height}
             if static_column and static_column in cohort.static.columns:
                 series = cohort.static[static_column]
                 chart = (

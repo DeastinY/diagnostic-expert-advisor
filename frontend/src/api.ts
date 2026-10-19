@@ -187,7 +187,7 @@ export const api = {
   processing: (name: string, body: Partial<Processing>) =>
     request<Processing>(`/api/cohorts/${name}/processing`, { method: "PUT", body: JSON.stringify(body) }),
   overviewCharts: (name: string, where: Where, params: Record<string, string | undefined>) =>
-    request<Record<string, object> & { coverage_shown?: { variables: number; of: number } }>(`/api/cohorts/${name}/charts/overview${qs({ ...params, dark: isDark() }, where)}`),
+    request<Record<string, object> & { coverage_shown?: { variables: number; of: number }; tags_shown?: { shown: number; of: number } }>(`/api/cohorts/${name}/charts/overview${qs({ ...params, dark: isDark() }, where)}`),
   profileCharts: (name: string, where: Where) =>
     request<{ gallery: object | null; observations?: object }>(`/api/cohorts/${name}/charts/profile${qs({ dark: isDark() }, where)}`),
   trajectory: (name: string, where: Where, params: Record<string, string | number | undefined>) =>

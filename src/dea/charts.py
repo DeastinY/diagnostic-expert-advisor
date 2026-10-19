@@ -153,20 +153,35 @@ def histogram(
     height: int = 200,
     dark: bool = False,
     median: bool = True,
+    integer: bool = False,
 ):
-    """Single-hue histogram with rounded bar tops, a surface gap and a median marker."""
+    """Single-hue histogram with rounded bar tops, a surface gap and a median marker.
+
+    ``integer`` is for quantities read in whole units (days of stay): the bins are whole
+    numbers wide and the axis shows no decimals.
+    """
     t = theme(dark)
     series = values.drop_nulls().cast(pl.Float64())
     df = pl.DataFrame({"x": series}).to_pandas()
     label = _label(title, unit)
     base = alt.Chart(df)
+    if integer and series.len():
+        span = float(series.max() or 0) - float(series.min() or 0)
+        step = max(1, round(span / maxbins)) if span > maxbins else 1
+        bin_spec = alt.Bin(step=step)
+        x_axis = alt.Axis(labelFlush=True, format="d", tickMinStep=step)
+        tip_format = ".0f"
+    else:
+        bin_spec = alt.Bin(maxbins=maxbins)
+        x_axis = alt.Axis(labelFlush=True)
+        tip_format = ".3~f"
     bars = base.mark_bar(
         color=t.accent, cornerRadiusTopLeft=3, cornerRadiusTopRight=3, binSpacing=2
     ).encode(
-        x=alt.X("x:Q", bin=alt.Bin(maxbins=maxbins), title=label, axis=alt.Axis(labelFlush=True)),
+        x=alt.X("x:Q", bin=bin_spec, title=label, axis=x_axis),
         y=alt.Y("count():Q", title="Encounters", axis=alt.Axis(tickMinStep=1)),
         tooltip=[
-            alt.Tooltip("x:Q", bin=True, title=label, format=".3~f"),
+            alt.Tooltip("x:Q", bin=True, title=label, format=tip_format),
             alt.Tooltip("count():Q", title="Encounters"),
         ],
     )
@@ -434,7 +449,14 @@ def coverage_heatmap(
         .mark_rect(stroke=t.surface, strokeWidth=1)
         .encode(
             x=alt.X(
-                "hours:Q", title="Hours since admission", axis=alt.Axis(grid=False, tickMinStep=12)
+                "hours:Q",
+                title="Days since admission",
+                axis=alt.Axis(
+                    grid=False,
+                    values=list(range(0, int(df["hours2"].max()) + 1, 24)),
+                    labelExpr="datum.value / 24",
+                    labelFlush=True,
+                ),
             ),
             x2="hours2:Q",
             y=alt.Y(
@@ -445,9 +467,16 @@ def coverage_heatmap(
             ),
             color=alt.Color(
                 "fraction:Q",
-                title="Share of encounters with data",
+                title="Encounters with data",
                 scale=alt.Scale(domain=[0, 1], range=list(t.sequential)),
-                legend=alt.Legend(format=".0%", gradientLength=160, gradientThickness=8),
+                legend=alt.Legend(
+                    orient="top",
+                    direction="horizontal",
+                    format=".0%",
+                    gradientLength=220,
+                    gradientThickness=8,
+                    titleFontSize=11,
+                ),
             ),
             tooltip=[
                 alt.Tooltip("label:N", title="Variable"),
