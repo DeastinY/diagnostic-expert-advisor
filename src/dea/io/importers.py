@@ -20,8 +20,10 @@ observations, string columns become events, and absolute timestamps are kept as 
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Literal
 
@@ -48,11 +50,16 @@ _UNIT_SECONDS = {"s": 1.0, "ms": 0.001, "m": 60.0, "h": 3600.0, "d": 86400.0}
 _SAMPLE_ROWS = 50_000
 
 _ENCOUNTER_HINT = re.compile(
-    r"(encounter|stay|hadm|admission|case|patient|subject|visit|episode|^id$|_id$|^pid$)", re.I
+    r"(encounter|stay|hadm|admission|case|patient|subject|visit|episode|^id$|_id$|^pid$"
+    r"|pseudo[-_ ]?id|fallnummer|fall_id|aufenthalt)",
+    re.I,
 )
 _TIME_HINT = re.compile(
-    r"(^time|charttime|timestamp|datetime|offset|minute|hour|^date|_time$|_at$)", re.I
+    r"(^time|charttime|timestamp|datetime|offset|minute|hour|^date|_time$|_at$"
+    r"|^zeit|_zeit|uhrzeit|zeitpunkt|stunde|^t$)",
+    re.I,
 )
+_TABLE_SUFFIXES = (".csv", ".tsv", ".parquet", ".pq", ".csv.gz")
 _VARIABLE_HINT = re.compile(
     r"(variable|item|label|parameter|feature|concept|measurement|signal|^name$)", re.I
 )
@@ -60,9 +67,9 @@ _VALUE_HINT = re.compile(r"(^value$|valuenum|result|measurement_value|^val$)", r
 _UNIT_HINT = re.compile(r"(^unit|valueuom|^uom$|units?$|unit_source_value)", re.I)
 _UNIT_BY_NAME = (
     (re.compile(r"(min|minute)", re.I), "m"),
-    (re.compile(r"(hour|hrs|^h$)", re.I), "h"),
-    (re.compile(r"(sec|second)", re.I), "s"),
-    (re.compile(r"(day)", re.I), "d"),
+    (re.compile(r"(hour|hrs|^h$|stunde)", re.I), "h"),
+    (re.compile(r"(sec|second|sekunde)", re.I), "s"),
+    (re.compile(r"(day|_tag|tage)", re.I), "d"),
     (re.compile(r"(ms|milli)", re.I), "ms"),
 )
 
@@ -79,6 +86,7 @@ class ImportReport:
     mapping: dict[str, Any] = field(default_factory=dict)
     event_columns: list[str] = field(default_factory=list)
     dropped_columns: list[str] = field(default_factory=list)
+    empty_columns: list[str] = field(default_factory=list)  # present in the source, never a value
     warnings: list[str] = field(default_factory=list)
     unit_reports: list[Any] = field(default_factory=list)  # dea.suggest.units.UnitReport
     checks: list[Any] = field(default_factory=list)  # dea.quality.Check
@@ -134,6 +142,11 @@ class ImportReport:
             lines.append("string columns kept as events: " + ", ".join(self.event_columns))
         if self.dropped_columns:
             lines.append("dropped columns: " + ", ".join(self.dropped_columns))
+        if self.empty_columns:
+            shown = ", ".join(self.empty_columns[:8]) + (
+                ", ..." if len(self.empty_columns) > 8 else ""
+            )
+            lines.append(f"{len(self.empty_columns)} columns empty in every row: {shown}")
         lines.extend(f"warning: {w}" for w in self.warnings)
         lines.extend(f"units: {m}" for r in self.unit_reports if (m := r.message()))
         if self.applied:
@@ -147,7 +160,7 @@ class Detection:
     """Best guess at how a source is laid out. Every field can be overridden on import."""
 
     source: Path
-    format: Literal["dea", "csv_tree", "mimic", "fhir", "table", "unknown"]
+    format: Literal["dea", "csv_tree", "file_tree", "mimic", "fhir", "table", "unknown"]
     table_kind: Literal["long", "wide"] | None = None
     encounter_col: str | None = None
     time_col: str | None = None
@@ -158,9 +171,42 @@ class Detection:
     columns: list[str] = field(default_factory=list)
     dtypes: dict[str, str] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    # a folder of one table per encounter (``file_tree``): how the files are named, what
+    # else is in the folder, and the static table that goes with them
+    n_files: int = 0
+    files: list[str] = field(default_factory=list)
+    pattern: str | None = None
+    static_file: str | None = None
+    static_id_col: str | None = None
+    static_columns: list[str] = field(default_factory=list)
+    static_candidates: list[str] = field(default_factory=list)
+    tables: list[str] = field(default_factory=list)
+    ignored: list[str] = field(default_factory=list)
 
 
 # ----------------------------------------------------------------------------- reading
+
+
+def _sniff_csv(path: Path) -> tuple[str, bool]:
+    """Separator and decimal comma of a text table, from its first lines.
+
+    German exports come with ``;`` between the columns and ``16,3`` for 16.3; a header with
+    more semicolons than commas settles the separator, and a number with a comma in the
+    body settles the decimal mark.
+    """
+    try:
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
+            head = [line for _, line in zip(range(400), fh, strict=False)]
+    except OSError:
+        return ",", False
+    header = head[0] if head else ""
+    counts = {sep: header.count(sep) for sep in (";", "\t", ",", "|")}
+    sep = max(counts, key=lambda k: counts[k]) if any(counts.values()) else ","
+    if sep == ",":
+        return sep, False
+    body = "".join(head[1:])
+    decimal_comma = re.search(r"(?:^|[;\t|])-?\d+,\d+(?=[;\t|]|$)", body, re.M) is not None
+    return sep, decimal_comma
 
 
 def scan_table(path: Path | str) -> pl.LazyFrame:
@@ -171,12 +217,42 @@ def scan_table(path: Path | str) -> pl.LazyFrame:
         return pl.scan_parquet(p)
     if suffixes.endswith((".jsonl", ".ndjson")):
         return pl.scan_ndjson(p)
+    if ".tsv" in suffixes:
+        sep, decimal_comma = "\t", False
+    elif suffixes.endswith(".gz"):
+        sep, decimal_comma = ",", False  # not sniffed: polars decompresses on its own
+    else:
+        sep, decimal_comma = _sniff_csv(p)
     return pl.scan_csv(
         p,
-        separator="\t" if ".tsv" in suffixes else ",",
+        separator=sep,
+        decimal_comma=decimal_comma,
         infer_schema_length=10_000,
         try_parse_dates=True,
         null_values=["", "NA", "NaN", "nan", "NULL", "null", "None"],
+    )
+
+
+_NUMBER_TEXT = re.compile(r"^\s*[-+]?(\d+([.,]\d*)?|[.,]\d+)([eE][-+]?\d+)?\s*$")
+
+
+def _scan_text(path: Path, sep: str, columns: list[str]) -> pl.LazyFrame:
+    """Scan a CSV with every column as text: no inference, so a thousand files stack fast and
+    a column that is empty in one file and numeric in the next keeps one type."""
+    return pl.scan_csv(
+        path,
+        separator=sep,
+        schema_overrides=dict.fromkeys(columns, pl.String()),
+        infer_schema_length=0,
+        null_values=["", "NA", "NaN", "nan", "NULL", "null", "None"],
+        truncate_ragged_lines=True,
+    )
+
+
+def _numeric_text(col: pl.Expr) -> pl.Expr:
+    """Text to numbers, decimal comma included; what does not parse becomes null."""
+    return (
+        col.str.strip_chars().str.replace(",", ".", literal=True).cast(pl.Float64(), strict=False)
     )
 
 
@@ -268,6 +344,159 @@ def detect_table(df: pl.DataFrame, source: Path | str = "<frame>") -> Detection:
 
 
 _DESCEND = 4  # how many directory levels below a dropped folder are searched for a layout
+_SAME_HEADER = 0.8  # Jaccard similarity of two headers for files to count as the same kind
+
+
+def _is_table(p: Path) -> bool:
+    return p.is_file() and not p.name.startswith(".") and p.name.lower().endswith(_TABLE_SUFFIXES)
+
+
+def _tables_in(root: Path) -> list[Path]:
+    """The tables directly in a folder, by name."""
+    return sorted(x for x in root.iterdir() if _is_table(x))
+
+
+def _header(p: Path) -> list[str]:
+    """Column names of a table without reading it."""
+    if p.suffix.lower() in (".parquet", ".pq"):
+        return list(pl.read_parquet_schema(p))
+    if p.name.lower().endswith(".gz"):
+        return read_table(p, n_rows=1).columns
+    sep, _ = _sniff_csv(p)
+    with open(p, encoding="utf-8-sig", errors="replace") as fh:
+        line = fh.readline().rstrip("\r\n")
+    return [c.strip().strip('"') for c in line.split(sep)]
+
+
+def _affixes(names: list[str]) -> tuple[str, str]:
+    """The common start and end of file names; what is left in between is the id."""
+    prefix = os.path.commonprefix(names)
+    suffix = os.path.commonprefix([n[::-1] for n in names])[::-1]
+    shortest = min(len(n) for n in names)
+    if len(prefix) + len(suffix) >= shortest:  # the affixes would swallow some id entirely
+        suffix = suffix[: max(0, shortest - len(prefix) - 1)]
+    return prefix, suffix
+
+
+def _best_static(tables: list[Path], ids: list[str]) -> tuple[Path, str, float] | None:
+    """Among the other tables, the one with a column that names the most of these ids."""
+    wanted = set(ids)
+    best: tuple[Path, str, float] | None = None
+    for t in tables:
+        try:
+            df = read_table(t, n_rows=50_000)
+        except Exception:
+            continue
+        for c in df.columns:
+            values = set(df.get_column(c).cast(pl.String(), strict=False).drop_nulls().to_list())
+            share = len(values & wanted) / max(1, len(wanted))
+            if best is None or share > best[2]:
+                best = (t, c, share)
+    return best if best and best[2] >= 0.3 else None
+
+
+def detect_file_tree(
+    root: Path | str, pattern: str | None = None, static_file: str | None = None
+) -> Detection | None:
+    """A folder with one table per encounter, plus at most a static table and clutter.
+
+    The per-encounter files are found by their headers: the largest cluster of tables with
+    the same (or nearly the same) columns, at least two of them. The encounter id is what
+    differs between their names. A table that is not part of the cluster and has a column
+    whose values are those ids is the static table. ``pattern`` (a glob such as
+    ``patient_*.csv``) picks the files by name instead of by header, for the manual route;
+    ``static_file`` names the static table outright. Folders and other files are listed as
+    ignored. Returns None when no such group exists.
+    """
+    root = Path(root)
+    tables = _tables_in(root)
+    if pattern:
+        group = [t for t in tables if fnmatch(t.name, pattern)]
+    else:
+        headers = {t: frozenset(_header(t)) for t in tables}
+        clusters: list[list[Path]] = []
+        for t in tables:
+            h = headers[t]
+            for cluster in clusters:
+                h0 = headers[cluster[0]]
+                if len(h & h0) / max(1, len(h | h0)) >= _SAME_HEADER:
+                    cluster.append(t)
+                    break
+            else:
+                clusters.append([t])
+        clusters.sort(key=len, reverse=True)
+        group = clusters[0] if clusters and len(clusters[0]) >= 2 else []
+    if len(group) < 2:
+        return None
+    ext = "".join(group[0].suffixes)
+    stems = [t.name[: -len(ext)] if t.name.endswith(ext) else t.stem for t in group]
+    prefix, suffix = _affixes(stems)
+    ids = [stem[len(prefix) : len(stem) - len(suffix)] or stem for stem in stems]
+    members = set(group)
+    others = [t for t in tables if t not in members]
+    ignored = sorted(
+        x.name + "/" for x in root.iterdir() if x.is_dir() and not x.name.startswith(".")
+    )
+    ignored += sorted(
+        x.name
+        for x in root.iterdir()
+        if x.is_file() and not x.name.startswith(".") and not _is_table(x)
+    )
+
+    sample = read_table(group[0], n_rows=_SAMPLE_ROWS)
+    det = detect_table(sample.with_columns(pl.lit("x").alias("__encounter")), group[0])
+    det.columns = [c for c in det.columns if c != "__encounter"]
+    det.dtypes.pop("__encounter", None)
+    det.source = root
+    det.format = "file_tree"
+    det.encounter_col = None
+    notes = [f"{len(group)} files, one per encounter, named {prefix}{{id}}{suffix}{ext}"]
+    if det.time_col is None and det.columns:
+        first = det.columns[0]
+        if sample.schema[first].is_numeric() or sample.schema[first].is_temporal():
+            det.time_col = first
+            notes.append(f"time taken from the first column, '{first}'")
+    det.time_unit = _guess_time_unit(sample, det.time_col, None) if det.time_col else "auto"
+    det.notes = [n for n in det.notes if "no id-like" not in n and "no time column" not in n]
+    if det.time_col is None:
+        notes.append("no time column found; pick one below")
+    det.n_files = len(group)
+    det.files = [t.name for t in group[:4]]
+    det.pattern = f"{prefix}{{id}}{suffix}{ext}"
+    det.tables = [t.name for t in tables]
+    det.ignored = ignored
+    det.static_candidates = [t.name for t in others]
+    chosen: tuple[Path, str, float] | None = None
+    if static_file:
+        target = root / static_file
+        if target.exists():
+            best = _best_static([target], ids)
+            chosen = best or (target, "", 0.0)
+    else:
+        chosen = _best_static(others, ids)
+    if chosen is not None:
+        t, col, share = chosen
+        det.static_file = t.name
+        det.static_id_col = col or None
+        try:
+            det.static_columns = _header(t)
+        except Exception:
+            det.static_columns = []
+        if col:
+            notes.append(
+                f"static table {t.name}: column '{col}' names {share:.0%} of the encounter ids"
+            )
+        else:
+            notes.append(f"static table {t.name}: no column holds the encounter ids; pick one")
+    elif others:
+        notes.append(
+            f"{len(others)} other table(s) found but none holds the encounter ids: "
+            + ", ".join(t.name for t in others[:3])
+        )
+    if ignored:
+        notes.append("ignored: " + ", ".join(ignored[:4]) + (", ..." if len(ignored) > 4 else ""))
+    det.notes = notes + det.notes
+    return det
 
 
 def _detect_below(root: Path, depth: int) -> Detection | None:
@@ -282,7 +511,7 @@ def _detect_below(root: Path, depth: int) -> Detection | None:
     table: Detection | None = None
     for d in sorted(x for x in root.iterdir() if x.is_dir() and not x.name.startswith(".")):
         det = detect(d, _depth=depth - 1)
-        if det.format in ("dea", "mimic", "fhir", "csv_tree"):
+        if det.format in ("dea", "mimic", "fhir", "csv_tree", "file_tree"):
             return det
         if det.format == "table" and table is None:
             table = det
@@ -313,7 +542,11 @@ def detect(path: Path | str, *, _depth: int = _DESCEND) -> Detection:
         )
         if has_tree:
             return Detection(source=p, format="csv_tree", time_unit="m")
-        tables = sorted(x for x in p.iterdir() if x.suffix.lower() in (".csv", ".tsv", ".parquet"))
+        tables = _tables_in(p)
+        if len(tables) >= 2:
+            tree = detect_file_tree(p)
+            if tree is not None:
+                return tree
         if len(tables) == 1:
             return detect(tables[0])
         nested = _detect_below(p, _depth)
@@ -325,6 +558,12 @@ def detect(path: Path | str, *, _depth: int = _DESCEND) -> Detection:
             source=p,
             format="unknown",
             notes=["directory holds no recognizable layout", f"it contains: {shown or 'nothing'}"],
+            tables=[t.name for t in tables],
+            ignored=sorted(
+                x.name + ("/" if x.is_dir() else "")
+                for x in p.iterdir()
+                if not x.name.startswith(".") and not _is_table(x)
+            ),
         )
     if not p.exists():
         raise FileNotFoundError(p)
@@ -703,6 +942,154 @@ def import_csv_tree(
     return cohort, report
 
 
+def _static_from(
+    table: pl.DataFrame, id_col: str | None, ids: list[str], report: ImportReport
+) -> pl.DataFrame:
+    """A static table keyed by encounter id, the id column named or found by overlap."""
+    col = id_col if id_col in table.columns else None
+    if col is None:
+        hinted = [c for c in table.columns if _ENCOUNTER_HINT.search(c)]
+        wanted = set(ids)
+        best, best_share = None, 0.0
+        for c in hinted + [c for c in table.columns if c not in hinted]:
+            values = set(table.get_column(c).cast(pl.String(), strict=False).drop_nulls().to_list())
+            share = len(values & wanted) / max(1, len(wanted))
+            if share > best_share:
+                best, best_share = c, share
+        col = best if best_share > 0 else (hinted[0] if hinted else None)
+    if col is None:
+        raise ValueError("the static table needs a column with the encounter ids")
+    report.mapping["static_id"] = col
+    out = table.rename({col: ENCOUNTER_ID}).with_columns(pl.col(ENCOUNTER_ID).cast(pl.String()))
+    return out.unique(subset=[ENCOUNTER_ID], keep="first")
+
+
+def import_file_tree(
+    path: Path | str,
+    detection: Detection,
+    name: str | None = None,
+    static_path: Path | str | None = None,
+    static_cols: list[str] | None = None,
+) -> tuple[Cohort, ImportReport]:
+    """Import a folder of one table per encounter (see :func:`detect_file_tree`).
+
+    Every file is scanned lazily, gets its encounter id from its name and the files are
+    stacked on the union of their columns, so files with a few more or fewer columns, or
+    the columns in another order, import together. The static table, if any, is joined on
+    the id.
+    """
+    root = Path(path)
+    det = detection
+    if not det.pattern:
+        raise ValueError("a file tree needs a file pattern such as patient_{id}.csv")
+    rx = re.compile("^" + re.escape(det.pattern).replace(re.escape("{id}"), "(.+)") + "$")
+    files = [(t, m.group(1)) for t in _tables_in(root) if (m := rx.match(t.name))]
+    if not files:
+        raise ValueError(f"no files named {det.pattern} under {root}")
+    if not det.time_col:
+        raise ValueError("a time column is required; pass time_col=")
+    ids = [eid for _, eid in files]
+    progress.report("reading", f"{len(files)} files")
+    csv_like = not files[0][0].name.lower().endswith((".parquet", ".pq"))
+    empty: list[str] = []
+    if csv_like:
+        # Every file is read eagerly with every column as text: no schema inference per
+        # file, so a thousand small files stack in seconds, and a column that is empty in
+        # one file and numeric in the next keeps one type. Numbers are parsed once, on the
+        # stacked table, with the decimal comma of German exports taken care of.
+        sep, _ = _sniff_csv(files[0][0])
+        frames = []
+        for t, eid in files:
+            cols = _header(t)
+            frames.append(
+                pl.read_csv(
+                    t,
+                    separator=sep,
+                    schema_overrides=dict.fromkeys(cols, pl.String()),
+                    infer_schema_length=0,
+                    null_values=["", "NA", "NaN", "nan", "NULL", "null", "None"],
+                    truncate_ragged_lines=True,
+                ).with_columns(pl.lit(eid).alias("__encounter"))
+            )
+        df = pl.concat(frames, how="diagonal")
+        del frames
+        time_col = det.time_col
+        if time_col not in df.columns:
+            raise ValueError(f"time column {time_col!r} is in none of the files")
+        empty = [
+            c
+            for c in df.columns
+            if c not in ("__encounter", time_col) and df[c].null_count() == df.height
+        ]
+        df = df.drop(empty)
+        stamp = det.time_unit == "datetime"  # a timestamp stays text for the date parser
+        casts = []
+        for c in df.columns:
+            if c == "__encounter" or (c == time_col and stamp):
+                continue
+            col = df.get_column(c)
+            non_null = df.height - col.null_count()
+            if not non_null:
+                continue
+            parsed = _numeric_text(col)
+            if (df.height - parsed.null_count()) / non_null >= 0.95 or c == time_col:
+                casts.append(parsed.alias(c))
+        lf = df.with_columns(casts).lazy()
+    else:
+        frames = [scan_table(t).with_columns(pl.lit(eid).alias("__encounter")) for t, eid in files]
+        lf = pl.concat(frames, how="diagonal_relaxed")
+    report_extra = {
+        "encounter": "file name",
+        "pattern": det.pattern,
+        "files": str(len(files)),
+    }
+    static = None
+    sfile = (
+        Path(static_path) if static_path else (root / det.static_file if det.static_file else None)
+    )
+    probe = ImportReport(source=str(root), format="file_tree")
+    if sfile is not None and sfile.exists():
+        static = _static_from(read_table(sfile), det.static_id_col, ids, probe)
+        report_extra["static"] = sfile.name
+        report_extra["static_id"] = probe.mapping.get("static_id", "")
+    source = str(root)
+    if det.table_kind == "long":
+        if not det.variable_col or not det.value_col:
+            raise ValueError("long files need variable_col= and value_col=")
+        cohort, report = import_long(
+            lf,
+            "__encounter",
+            det.time_col,
+            det.variable_col,
+            det.value_col,
+            det.time_unit,
+            static,
+            name or root.name,
+            source,
+            unit_col=det.unit_col or None,
+        )
+    else:
+        cohort, report = import_wide(
+            lf,
+            "__encounter",
+            det.time_col,
+            det.time_unit,
+            static,
+            static_cols,
+            name or root.name,
+            source,
+        )
+    report.format = "file_tree"
+    report.mapping.update(report_extra)
+    if empty:
+        report.empty_columns = empty
+    report.mapping.pop("encounter", None)
+    report.mapping["encounter"] = "file name"
+    if det.ignored:
+        report.warnings.append("ignored in the folder: " + ", ".join(det.ignored[:6]))
+    return cohort, report
+
+
 def import_path(
     path: Path | str,
     name: str | None = None,
@@ -768,10 +1155,29 @@ def _import_path(
     p = Path(path)
     det = detection or detect(p)
     static_cols = overrides.pop("static_cols", None)
+    pattern = overrides.pop("pattern", None)
+    static_file = overrides.pop("static_file", None)
+    # the manual route: the user names the files of a folder (and the static table) outright
+    if (
+        p.is_dir()
+        and (pattern or overrides.get("format") == "file_tree")
+        and (det.format != "file_tree" or pattern or static_file)
+    ):
+        forced = detect_file_tree(p, pattern=pattern or det.pattern, static_file=static_file)
+        if forced is None:
+            raise ValueError(f"no files named {pattern!r} in {p.name}")
+        for key in ("time_col", "time_unit", "table_kind", "variable_col", "value_col", "unit_col"):
+            if det.format == "file_tree" and getattr(det, key) and not overrides.get(key):
+                setattr(forced, key, getattr(det, key))
+        det = forced
+    elif static_file and det.format == "file_tree":
+        det.static_file = static_file
     for key, value in overrides.items():
-        if value is not None:
+        if value is not None and hasattr(det, key):
             setattr(det, key, value)
     cohort_name = name or p.stem
+    if det.format == "file_tree":  # the files may sit a few folders below what was dropped
+        return import_file_tree(Path(det.source), det, cohort_name, static_path, static_cols)
     if det.format == "dea":
         cohort = load_cohort(p)
         return cohort, ImportReport(

@@ -177,3 +177,84 @@ def test_detect_finds_layout_below_a_dropped_parent(tmp_path: Path) -> None:
     (deep / "x.csv").write_text("encounter_id,time,v\n1,0,1\n")
     unknown = detect(tmp_path / "a")
     assert unknown.format == "unknown" and any("it contains: b/" in n for n in unknown.notes)
+
+
+def _patient_tree(root: Path, n: int = 6) -> Path:
+    """A German-style export: one semicolon CSV per patient with decimal commas, a static
+    table keyed by Pseudo-ID, a tool folder and a readme that must be ignored."""
+    import random
+
+    root.mkdir(parents=True, exist_ok=True)
+    rnd = random.Random(3)
+    for pid in range(n):
+        lines = ["Zeit_ab_Aufnahme;HF;MAP;Laktat;Notiz;Leer"]
+        if pid % 2:  # another column order, one column fewer: still the same kind of file
+            lines = ["Zeit_ab_Aufnahme;MAP;HF;Laktat;Notiz"]
+        for i in range(1, 25):
+            hr = f"{70 + rnd.random() * 30:.2f}".replace(".", ",")
+            mp = f"{60 + rnd.random() * 20:.1f}".replace(".", ",")
+            lac = f"{1 + rnd.random():.2f}".replace(".", ",") if i % 6 == 0 else ""
+            note = "Lagerung" if i % 12 == 0 else ""
+            if pid % 2:
+                lines.append(f"{15 * i};{mp};{hr};{lac};{note}")
+            else:
+                lines.append(f"{15 * i};{hr};{mp};{lac};{note};")
+        (root / f"dynamische_variablen_patient_{pid}.csv").write_text("\n".join(lines) + "\n")
+    static = ["Geschlecht;Alter;Pseudo-ID;Sterblichkeit"]
+    for pid in range(n + 1):  # one static row without a file
+        static.append(f"{'W' if pid % 2 else 'M'};{50 + pid};{pid};{pid % 3 == 0}")
+    (root / "andere_variablen_patienten.csv").write_text("\n".join(static) + "\n")
+    (root / "_tool").mkdir(exist_ok=True)
+    (root / "_tool" / "build.py").write_text("print('hi')\n")
+    (root / "README.txt").write_text("export\n")
+    return root
+
+
+def test_detects_and_imports_a_folder_of_patient_files(tmp_path: Path) -> None:
+    from dea.io.importers import detect_file_tree
+
+    root = _patient_tree(tmp_path / "UK 01 Kontrolldaten")
+    det = detect(tmp_path)  # the dropped parent, the data one level below
+    assert det.format == "file_tree" and Path(det.source) == root
+    assert det.n_files == 6 and det.pattern == "dynamische_variablen_patient_{id}.csv"
+    assert det.time_col == "Zeit_ab_Aufnahme" and det.time_unit == "m" and det.table_kind == "wide"
+    assert det.static_file == "andere_variablen_patienten.csv" and det.static_id_col == "Pseudo-ID"
+    assert det.ignored == ["_tool/", "README.txt"] and "HF" in det.columns
+    assert any("one per encounter" in n for n in det.notes)
+
+    cohort, report = import_path(tmp_path, name="uk")
+    assert report.format == "file_tree" and report.n_encounters == 7  # 6 files + a static-only row
+    assert set(cohort.variables) == {"HF", "MAP", "Laktat"}  # decimal commas parsed
+    assert cohort.event_variables == ["Notiz"]
+    assert report.empty_columns == ["Leer"]
+    assert {"Geschlecht", "Alter", "Sterblichkeit"} <= set(cohort.static_columns)
+    assert cohort.static.filter(pl.col("encounter_id") == "3")["Alter"].item() == 53
+    hr = cohort.get("1").series("HF")
+    assert hr.height == 24 and 70 <= hr["value"].min() <= hr["value"].max() <= 100
+    assert hr["time"].max().total_seconds() == 24 * 15 * 60
+    assert any("1 static row" in w for w in report.warnings)
+
+    # the manual route: name the files, name the static table
+    forced = detect_file_tree(
+        root, pattern="dynamische_*.csv", static_file="andere_variablen_patienten.csv"
+    )
+    assert forced is not None and forced.n_files == 6 and forced.static_id_col == "Pseudo-ID"
+    cohort2, _ = import_path(root, name="uk2", pattern="dynamische_*.csv")
+    assert len(cohort2) == 7
+    assert detect_file_tree(root, pattern="nothing_*.csv") is None
+    with pytest.raises(ValueError):
+        import_path(root, name="x", pattern="nothing_*.csv")
+
+
+def test_semicolon_and_decimal_comma_single_table(tmp_path: Path) -> None:
+    f = tmp_path / "export.csv"
+    rows = ["id;zeit;HF;MAP"] + [""] * 0
+    for e in ("a", "b"):
+        for i in range(1, 11):
+            rows.append(f"{e};{i * 60};{str(80 + i / 10).replace('.', ',')};{65 + i}")
+    f.write_text("\n".join(rows) + "\n")
+    det = detect(f)
+    assert det.encounter_col == "id" and det.time_col == "zeit" and det.table_kind == "wide"
+    cohort, _ = import_path(f, name="semi")
+    assert set(cohort.variables) == {"HF", "MAP"}
+    assert abs(cohort.get("a").series("HF")["value"][0] - 80.1) < 1e-9

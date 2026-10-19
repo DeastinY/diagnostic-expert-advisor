@@ -53,7 +53,7 @@ export interface SiteComparison {
 export interface UnitReport { variable: string; canonical: string; label: string; seen: Record<string, number>; converted: Record<string, number>; unconvertible: Record<string, number>; mixed: boolean; split: boolean; skipped: boolean }
 export interface ImportReport {
   source: string; format: string; n_encounters: number; n_variables: number; n_observations: number; n_events: number;
-  mapping: Record<string, string>; event_columns: string[]; dropped_columns: string[]; warnings: string[];
+  mapping: Record<string, string>; event_columns: string[]; dropped_columns: string[]; empty_columns?: string[]; warnings: string[];
   unit_reports: UnitReport[]; checks: Check[]; applied: string[]; n_intervals?: number;
   summary: { error: number; warning: number; info: number; fixable: number; recommended: number; units_converted: number; units_split: number; units_skipped: number };
 }
@@ -75,6 +75,9 @@ export interface Detection {
   format: string; table_kind: string | null; encounter_col: string | null; time_col: string | null;
   variable_col: string | null; value_col: string | null; unit_col: string | null; time_unit: string; columns: string[];
   dtypes: Record<string, string>; notes: string[]; preview: Record<string, unknown>[];
+  // a folder of one table per encounter, or what a folder holds when nothing was recognized
+  n_files: number; files: string[]; pattern: string | null; static_file: string | null; static_id_col: string | null;
+  static_columns: string[]; static_candidates: string[]; tables: string[]; ignored: string[];
 }
 
 export class ApiError extends Error {
@@ -161,7 +164,8 @@ export const api = {
   deleteCohort: (name: string) => request<void>(`/api/cohorts/${name}`, { method: "DELETE" }),
   demo: (body: { name: string; n: number; mimic: boolean; sites?: number }) =>
     request<{ name: string }>("/api/cohorts/demo", { method: "POST", body: JSON.stringify(body) }),
-  detect: (path: string) => request<Detection>("/api/detect", { method: "POST", body: JSON.stringify({ path }) }),
+  detect: (path: string, overrides: Record<string, unknown> = {}) =>
+    request<Detection>("/api/detect", { method: "POST", body: JSON.stringify({ path, overrides }) }),
   import: (body: ImportBody) =>
     request<{ name: string; report: ImportReport }>("/api/cohorts/import", { method: "POST", body: JSON.stringify(body) }),
   preview: (body: ImportBody) =>

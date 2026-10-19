@@ -492,3 +492,33 @@ def test_pre_admission_window_and_panel(client: TestClient) -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["spec"] is not None or body["note"]  # the synthetic cohort may start at admission
+
+
+def test_detect_manual_file_tree_override(client: TestClient, tmp_path):
+    import sys
+
+    sys.path.insert(0, "tests")
+    from test_importers import _patient_tree
+
+    root = _patient_tree(tmp_path / "export")
+    d = client.post("/api/detect", json={"path": str(root), "overrides": {}}).json()
+    assert d["format"] == "file_tree" and d["n_files"] == 6 and d["preview"]
+    assert d["static_file"] == "andere_variablen_patienten.csv" and "HF" in d["columns"]
+    forced = client.post(
+        "/api/detect", json={"path": str(root), "overrides": {"pattern": "dynamische_*.csv"}}
+    ).json()
+    assert (
+        forced["format"] == "file_tree"
+        and forced["pattern"] == "dynamische_variablen_patient_{id}.csv"
+    )
+    bad = client.post(
+        "/api/detect", json={"path": str(root), "overrides": {"pattern": "nope_*.csv"}}
+    )
+    assert bad.status_code == 400
+    r = client.post(
+        "/api/cohorts/import", json={"path": str(root), "name": "tree", "overrides": {}}
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["report"]["n_encounters"] == 7 and r.json()["report"]["empty_columns"] == [
+        "Leer"
+    ]

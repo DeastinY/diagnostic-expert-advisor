@@ -47,7 +47,8 @@ const FORMAT_TEXT: Record<string, [string, string]> = {
   csv_tree: ["DEA v1 tree", "static.csv plus one dynamic.csv per encounter."],
   dea: ["DEA cohort", "This is already a DEA cohort. It will be copied into the data directory."],
   table: ["Table", "One table with an encounter id, a time and either variable/value columns or one column per variable. Check the column mapping below."],
-  unknown: ["Not recognized", "DEA could not tell what this is. Have a look at the notes; a single table, a MIMIC-IV folder or FHIR resources work."],
+  file_tree: ["One file per encounter", "A folder of tables with the same columns, one per patient or stay; the encounter id is what differs between the file names. A static table with one row per encounter goes with them. Check the time column and the static table below."],
+  unknown: ["Not recognized", "DEA could not tell the layout of this folder on its own. Below you can say how to read it: as one file per encounter, by naming the files, or as a single table."],
 };
 
 const STEPS = ["Add data", "What we found", "Review & fix", "Done"];
@@ -91,6 +92,9 @@ function Review({ report, previous, selected, onChoose, busy, loadHist, loadSeri
       )}
       {report.applied.length > 0 && <div className="applied rise">✓ {report.applied.length} fix{report.applied.length === 1 ? "" : "es"} applied. What is listed below is what remains.</div>}
       {report.warnings.map((w) => <Alert key={w}>{w}</Alert>)}
+      {report.empty_columns && report.empty_columns.length > 0 && (
+        <div className="small muted">{num(report.empty_columns.length)} column{report.empty_columns.length === 1 ? " is" : "s are"} empty in every row and left out: {report.empty_columns.slice(0, 8).join(", ")}{report.empty_columns.length > 8 ? ", …" : ""}</div>
+      )}
       <Findings checks={report.checks} total={report.n_observations} selected={selected} onChoose={onChoose} busy={busy} loadHist={loadHist} loadSeries={loadSeries} unitReports={report.unit_reports} laterNote="For later, on the profile page:" />
     </div>
   );
@@ -331,10 +335,17 @@ export function ImportWizard({ onDone, onMore, onImported, dropped }: { onDone: 
             </div>
             <p className="small muted" style={{ marginTop: 8 }}>{fmtText}</p>
           </div>
-          {det.format === "table" && (
+          {det.format === "file_tree" && (
+            <div className="row" style={{ gap: 6 }}>
+              <span className="small muted">for example</span>
+              {det.files.slice(0, 2).map((f) => <span key={f} className="chip muted">{f}</span>)}
+            </div>
+          )}
+          {(det.format === "table" || det.format === "file_tree") && (
             <>
               <div className="grid c2">
-                <Sel k="encounter_col" label="Encounter id column" />
+                {det.format === "table" && <Sel k="encounter_col" label="Encounter id column" />}
+                {det.format === "file_tree" && <label className="field">Encounter id<input value="from the file name" disabled /></label>}
                 <Sel k="time_col" label="Time column" />
                 <label className="field">Time unit
                   <select value={ov.time_unit ?? det.time_unit} onChange={(e) => setOv({ ...ov, time_unit: e.target.value })}>
@@ -359,9 +370,50 @@ export function ImportWizard({ onDone, onMore, onImported, dropped }: { onDone: 
               )}
             </>
           )}
-          {det.format === "table" && (
+          {det.format === "file_tree" && (
+            <div className="grid c2">
+              <label className="field">Static table in the folder
+                <select value={ov.static_file ?? det.static_file ?? ""} onChange={(e) => setOv({ ...ov, static_file: e.target.value, static_id_col: "" })}>
+                  <option value="">none</option>
+                  {det.static_candidates.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <span className="small muted">one row per encounter: age, sex, outcome, ...</span>
+              </label>
+              {(ov.static_file ?? det.static_file) && (
+                <label className="field">Its encounter id column
+                  <select value={ov.static_id_col ?? det.static_id_col ?? ""} onChange={(e) => setOv({ ...ov, static_id_col: e.target.value })}>
+                    <option value="">find by matching ids</option>
+                    {((ov.static_file ?? det.static_file) === det.static_file ? det.static_columns : []).map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
+          {det.format === "unknown" && (
+            <div className="stack" style={{ gap: 10 }}>
+              {det.tables.length > 0 && (
+                <div className="field">
+                  <span>Tables in this folder</span>
+                  <div className="row">{det.tables.slice(0, 12).map((t) => <button key={t} className="sm" disabled={!!busy} title="Read this table on its own" onClick={() => void inspectPath(`${staged}/${t}`)}>{t}</button>)}{det.tables.length > 12 && <span className="small muted">and {det.tables.length - 12} more</span>}</div>
+                </div>
+              )}
+              <div className="field">
+                <span>One file per encounter: the files to take, as a pattern</span>
+                <div className="row">
+                  <input style={{ flex: 1 }} placeholder="e.g. patient_*.csv" value={ov.pattern ?? ""} onChange={(e) => setOv({ ...ov, pattern: e.target.value })} />
+                  <button className="sm" disabled={!!busy || !(ov.pattern ?? "").trim()} onClick={async () => {
+                    setBusy("Reading the files…"); setErr(null);
+                    try { const d = await api.detect(staged!, { pattern: ov.pattern }); setDet(d); setOv({ pattern: ov.pattern! }); }
+                    catch (e) { fail(e); } finally { setBusy(null); }
+                  }}>Read as one file per encounter</button>
+                </div>
+                <span className="small muted">The encounter id is what differs between the file names. {det.ignored.length > 0 ? `Not tables: ${det.ignored.slice(0, 4).join(", ")}${det.ignored.length > 4 ? ", …" : ""}.` : ""}</span>
+              </div>
+            </div>
+          )}
+          {(det.format === "table" || det.format === "file_tree") && (
             <div className="field">
-              <span>Static table (optional): one row per encounter with age, sex, outcome, hospital, ...</span>
+              <span>{det.format === "file_tree" ? "Or a static table from elsewhere (optional)" : "Static table (optional): one row per encounter with age, sex, outcome, hospital, ..."}</span>
               <div className="row">
                 <input style={{ flex: 1 }} placeholder="/path/to/patients.csv" value={staticPath} onChange={(e) => setStaticPath(e.target.value)} />
                 <button className="sm" disabled={!!busy} onClick={() => staticInput.current?.click()}>Upload</button>

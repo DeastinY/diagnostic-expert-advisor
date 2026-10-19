@@ -54,6 +54,8 @@ def _cmd_import(args: argparse.Namespace) -> int:
             "unit_col",
             "time_unit",
             "table_kind",
+            "pattern",
+            "static_file",
         )
         if getattr(args, k, None)
     }
@@ -437,6 +439,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--time-unit", choices=["auto", "datetime", "s", "ms", "m", "h", "d"])
     p.add_argument("--table-kind", choices=["long", "wide"])
+    p.add_argument(
+        "--pattern",
+        help="read a folder as one table per encounter: the files to take, e.g. 'patient_*.csv'",
+    )
+    p.add_argument("--static-file", help="the static table inside that folder, by file name")
     p.set_defaults(func=_cmd_import)
 
     p = sub.add_parser("check", help="run the data quality checks on a cohort")

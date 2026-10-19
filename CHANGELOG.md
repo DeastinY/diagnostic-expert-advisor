@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+Import: a folder with one file per patient
+- A folder of tables with the same columns, one per patient or stay, is recognized as such:
+  the per-encounter files are found by their headers (order and a few columns may differ),
+  the encounter id is what differs between the file names, and a static table is the other
+  table with a column that names those ids. The "what we found" step shows the pattern, the
+  static table and its id column, the time column and unit, and what in the folder was
+  ignored; all of it can be changed before the checks run.
+- The manual route when nothing is recognized: name the files with a pattern
+  (`patient_*.csv`) and pick the static table, in the app or with `dea import --pattern`
+  and `--static-file`; or read one of the folder's tables on its own.
+- Semicolons and decimal commas are read as such. A thousand small files import in seconds:
+  they are read with one text schema and parsed once, stacked on the union of their columns.
+- Columns that are empty in every file are reported as such and left out, not kept as events.
+- German column names for the encounter id (Pseudo-ID, Fallnummer) and the time (Zeit,
+  Uhrzeit, Zeitpunkt) are recognized.
+
 Data before admission
 - The run-up that still belongs to a stay is a cohort setting, `processing.pre_admission_lead_hours`
   (24 by default, editable under Processing). The checks use it: records further back are

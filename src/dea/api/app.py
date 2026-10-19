@@ -791,12 +791,30 @@ def create_app(
         write_synthetic(target, n_encounters=body.n, name=body.name, sites=body.sites)
         return {"name": body.name}
 
-    def _detected(p: Path) -> dict[str, Any]:
+    def _detected(p: Path, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         """Detection as JSON. ``source`` is the file or folder to import, which for a folder
-        holding a single table is that table, not the folder."""
+        holding a single table is that table, not the folder. With ``pattern`` or
+        ``format: file_tree`` in the overrides, the folder is read as one file per encounter
+        no matter what the headers say: the manual route."""
+        from dea.io.importers import detect_file_tree
+
         det = detect(p)
+        ov = overrides or {}
+        if p.is_dir() and (ov.get("pattern") or ov.get("format") == "file_tree"):
+            forced = detect_file_tree(
+                Path(det.source) if det.format == "file_tree" else p,
+                pattern=ov.get("pattern") or det.pattern,
+                static_file=ov.get("static_file") or None,
+            )
+            if forced is None:
+                raise HTTPException(400, f"no files named {ov.get('pattern')!r} in {p.name}")
+            det = forced
         src = Path(det.source)
-        preview = _records(read_table(src, n_rows=8)) if det.format == "table" else []
+        preview: list[dict[str, Any]] = []
+        if det.format == "table":
+            preview = _records(read_table(src, n_rows=8))
+        elif det.format == "file_tree" and det.files:
+            preview = _records(read_table(src / det.files[0], n_rows=8))
         return {
             **{k: (str(v) if isinstance(v, Path) else v) for k, v in det.__dict__.items()},
             "preview": preview,
@@ -807,7 +825,7 @@ def create_app(
         p = Path(body.path)
         if not p.exists():
             raise HTTPException(404, f"{p} does not exist")
-        return _detected(p)
+        return _detected(p, body.overrides)
 
     # The checked-but-unfixed import of the last few sources stays in memory, so "apply and
     # check again" and the final import only apply fixes instead of reading everything again.

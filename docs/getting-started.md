@@ -111,6 +111,29 @@ Non-numeric values become events, string columns of a static table become filter
 Folders with several tables, the DEA v1 `static.csv` + `<id>/dynamic.csv` tree and zip uploads
 are detected the same way.
 
+## A folder with one file per patient
+
+Many exports come as a folder of tables, one per patient or stay, plus one table with the
+static data for everyone. Drop the folder onto the page and DEA reads it as such:
+
+- The per-patient files are found by their headers: the largest group of tables with the
+  same (or nearly the same) columns. Their names may differ in order or in a few columns.
+- The encounter id is what differs between the file names (`patient_{id}.csv`).
+- The static table is the other table that has a column with those ids; the "what we found"
+  step names the file and the column, both can be changed.
+- Semicolons and decimal commas are read as such, folders and other files are ignored and
+  listed, columns that are empty in every file are reported, not imported.
+
+The same from the command line, and the manual route when the headers do not line up:
+
+```bash
+uv run dea import ./export data/mine                              # detected
+uv run dea import ./export data/mine --pattern 'patient_*.csv' --static-file patients.csv
+```
+
+In the app the manual route is offered whenever a folder is not recognized: name the files
+with a pattern, pick the static table, then run the checks as usual.
+
 ## MIMIC-IV
 
 ### Getting access
