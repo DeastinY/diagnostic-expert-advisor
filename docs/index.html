@@ -150,18 +150,41 @@
   .feature .more svg { width: 14px; height: 14px; transition: transform .2s; }
   .feature:hover .more svg { transform: translateX(3px); }
 
-  /* ---------- the example import ---------- */
-  .ex { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr); gap: 40px; align-items: center; padding: 44px 0; border-top: 1px solid var(--border); }
-  .ex:first-child { border-top: 0; padding-top: 8px; }
-  .ex:nth-child(even) { grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
-  .ex:nth-child(even) .fig { order: -1; }
-  @media (max-width: 860px) { .ex, .ex:nth-child(even) { grid-template-columns: 1fr; gap: 22px; padding: 32px 0; } .ex:nth-child(even) .fig { order: 0; } }
+  /* ---------- the example import: a horizontal stepper ---------- */
+  .walk { position: relative; }
+  .walk-nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+  .walk-steps { display: flex; gap: 6px; flex-wrap: wrap; }
+  .wstep { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); font: inherit; font-size: 13px; cursor: pointer; transition: background .25s, border-color .25s, color .25s, transform .25s var(--ease); }
+  .wstep:hover { color: var(--ink); border-color: var(--border-strong); transform: translateY(-1px); }
+  .wstep i { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font: 700 11px var(--mono); font-style: normal; background: var(--surface-2); color: var(--ink-2); transition: background .25s, color .25s; }
+  .wstep[aria-selected="true"] { color: var(--ink); border-color: rgba(88,166,255,.5); background: var(--accent-soft); }
+  .wstep[aria-selected="true"] i { background: var(--accent); color: var(--accent-ink); }
+  .wstep.done i { background: rgba(95,224,178,.18); color: var(--mint); }
+  .walk-arrows { display: flex; gap: 6px; flex: none; }
+  .warrow { width: 38px; height: 38px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--ink); cursor: pointer; display: grid; place-items: center; transition: background .2s, transform .2s var(--ease), opacity .2s; }
+  .warrow svg { width: 18px; height: 18px; }
+  .warrow:hover:not(:disabled) { background: rgba(255,255,255,.1); transform: translateY(-1px); }
+  .warrow:disabled { opacity: .3; cursor: default; }
+  .walk-bar { height: 2px; background: var(--border); border-radius: 2px; overflow: hidden; margin-bottom: 28px; }
+  .walk-bar i { display: block; height: 100%; width: 16.667%; background: linear-gradient(90deg, var(--accent), var(--violet)); transition: width .5s var(--ease); }
+  .walk-track { display: flex; align-items: flex-start; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; outline: none; border-radius: 12px; transition: height .45s var(--ease); }
+  .walk-track::-webkit-scrollbar { display: none; }
+  .walk-track:focus-visible { box-shadow: 0 0 0 2px var(--accent-soft); }
+  .ex { flex: 0 0 100%; width: 100%; scroll-snap-align: start; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr); gap: 40px; align-items: start; padding: 6px 2px 14px; }
+  @media (max-width: 860px) { .ex { grid-template-columns: 1fr; gap: 22px; } .wstep span { display: none; } .wstep { padding: 5px; } .walk-nav { margin-bottom: 12px; } }
   .ex .n { display: inline-flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 12px; color: var(--accent-2); margin-bottom: 12px; }
   .ex .n i { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-style: normal; font-weight: 700; }
   .ex h3 { font-size: 22px; margin-bottom: 10px; }
   .ex p { color: var(--ink-2); font-size: 15px; }
   .ex p + p { margin-top: 10px; }
   .ex p code { font-size: 13px; padding: 1px 6px; border-radius: 6px; background: var(--surface-2); color: var(--ink); }
+  /* a slide animates in when it becomes the active one: text from the left, shots from below, then the highlights */
+  .ex .txt { opacity: 0; transform: translateX(-16px); transition: opacity .5s ease, transform .55s var(--ease); }
+  .ex .shot { opacity: 0; transform: translateY(18px) scale(.985); transition: opacity .55s ease, transform .6s var(--ease); transition-delay: calc(.1s * var(--k, 0)); }
+  .ex .hl { opacity: 0; transform: scale(1.05); transition: opacity .4s ease, transform .5s var(--ease); transition-delay: calc(.55s + .1s * var(--k, 0)); }
+  .ex.on .txt, .ex.on .shot, .ex.on .hl { opacity: 1; transform: none; }
+  .fig .shot:nth-child(2) { --k: 1; } .fig .shot:nth-child(3) { --k: 2; }
+  @media (prefers-reduced-motion: reduce) { .ex .txt, .ex .shot, .ex .hl, .walk-track, .walk-bar i { transition: none; } .ex .txt, .ex .shot, .ex .hl { opacity: 1; transform: none; } }
   .fig { display: grid; gap: 14px; min-width: 0; }
   .fig.two { grid-template-columns: 1fr 1fr; align-items: start; }
   .fig.stack { grid-template-columns: 1fr; }
@@ -263,6 +286,7 @@
   @keyframes fade { from { opacity: 0 } to { opacity: 1 } }
   .lb .box { position: relative; display: inline-block; max-width: min(1400px, 96vw); border-radius: 12px; border: 1px solid var(--border-strong); box-shadow: var(--shadow); overflow: hidden; animation: zoomIn .3s var(--ease) both; }
   .lb .box img { display: block; max-width: 100%; max-height: 92vh; }
+  .lb .hl { opacity: 1; transform: none; transition: none; }
   .lb .hl span { font-size: 13px; top: -29px; } .lb .hl.below span { top: auto; bottom: -29px; }
   @keyframes zoomIn { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
   .lb .cap { position: absolute; bottom: 18px; left: 0; right: 0; text-align: center; font-size: 13px; color: var(--ink-2); }
@@ -379,11 +403,17 @@
     <div class="sec-head reveal">
       <div class="eyebrow">Walkthrough</div>
       <h2>An example import.</h2>
-      <p>One export, start to finish: 140 ICU stays with 300,000 observations from a public, de-identified ICU database. Click a screenshot to enlarge it.</p>
+      <p>One export, start to finish: 140 ICU stays with 300,000 observations from a public, de-identified ICU database. Step through with the arrows, the chips or a swipe; click a screenshot to enlarge it.</p>
     </div>
-    <div class="examples">
-      <div class="ex reveal" id="ex-import">
-        <div>
+    <div class="walk reveal" id="walk">
+      <div class="walk-nav">
+        <div class="walk-steps" role="tablist" aria-label="Steps of the import"><button class="wstep" role="tab" aria-selected="true" aria-controls="ex-import" data-i="0"><i>1</i><span>Drop it in</span></button><button class="wstep" role="tab" aria-selected="false" aria-controls="ex-review" data-i="1"><i>2</i><span>Review & fix</span></button><button class="wstep" role="tab" aria-selected="false" aria-controls="ex-harmonize" data-i="2"><i>3</i><span>Harmonize</span></button><button class="wstep" role="tab" aria-selected="false" aria-controls="ex-plots" data-i="3"><i>4</i><span>Compare</span></button><button class="wstep" role="tab" aria-selected="false" aria-controls="ex-patient" data-i="4"><i>5</i><span>One patient</span></button><button class="wstep" role="tab" aria-selected="false" aria-controls="ex-build" data-i="5"><i>6</i><span>Build</span></button></div>
+        <div class="walk-arrows"><button class="warrow" type="button" data-dir="-1" aria-label="Previous step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button><button class="warrow" type="button" data-dir="1" aria-label="Next step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button></div>
+      </div>
+      <div class="walk-bar"><i id="walkfill"></i></div>
+      <div class="walk-track" id="walktrack" tabindex="0">
+      <article class="ex" id="ex-import" role="tabpanel">
+        <div class="txt">
           <div class="n"><i>1</i> drop it in</div>
           <h3>Drop the export onto the page.</h3>
           <p>A folder, a single table or a zip; for a large folder that is already on the machine you paste the path instead. The import reads a sample and shows what it found: the layout, the encounter and time columns, the variable, value and unit columns.</p>
@@ -393,10 +423,10 @@
           <div class="shot"><img src="img/walk-drop.png" alt="The drop zone while a 40 MB export uploads" data-full="img/walk-drop.png" data-cap="The drop zone during an upload."><div class="hl below" style="left:6.3%;top:60%;width:90.3%;height:21.5%"><span>a 40 MB CSV coming in</span></div></div>
           <div class="shot"><img src="img/walk-found.png" alt="What we found: the recognized columns and a preview of the table" data-full="img/walk-found.png" data-cap="What we found: a long table, the columns it recognized and a preview."><div class="hl" style="left:6.3%;top:51.7%;width:90.3%;height:30.5%"><span>the mapping, yours to correct</span></div></div>
         </div>
-      </div>
+      </article>
 
-      <div class="ex reveal" id="ex-review">
-        <div>
+      <article class="ex" id="ex-review" role="tabpanel">
+        <div class="txt">
           <div class="n"><i>2</i> review &amp; fix</div>
           <h3>The checks run before anything is written.</h3>
           <p>One line says how the data looks, then the findings come biggest first, the safe ones already ticked. Exact repeats of the same encounter, time, variable and value carry no information, so one copy is kept.</p>
@@ -406,10 +436,10 @@
           <div class="shot"><img src="img/walk-review.png" alt="The review step: tiles with the counts, the verdict and the findings with their fixes ticked" data-full="img/walk-review.png" data-cap="The review step: counts, the verdict, and the fixes biggest first."><div class="hl" style="left:7.3%;top:49.9%;width:87.9%;height:15.5%"><span>exact repeats, fix ticked</span></div></div>
           <div class="shot"><img src="img/walk-conflicting.png" alt="The finding for conflicting values at the same time, with the rows and a choice of how to resolve them" data-full="img/walk-conflicting.png" data-cap="Conflicting values at the same time: the rows, and how to resolve them."><div class="hl below" style="left:4%;top:88%;width:40%;height:9%"><span>your call</span></div></div>
         </div>
-      </div>
+      </article>
 
-      <div class="ex reveal" id="ex-harmonize">
-        <div>
+      <article class="ex" id="ex-harmonize" role="tabpanel">
+        <div class="txt">
           <div class="n"><i>3</i> harmonize</div>
           <h3>Local names get canonical names and codes.</h3>
           <p>The profile page lists what it recognized. Each rename reads local name, canonical name, LOINC code and UCUM unit: <code>Heart Rate</code> becomes <code>heart_rate</code>, LOINC 8867-4, in /min. Drugs get RxNorm and ATC. When several local names land on the same concept, the row says so and you decide whether they belong together: three spellings of glucose do. A drug charted in a unit that does not convert into the concept's, a prophylaxis bolus under a heparin name, is not proposed at all.</p>
@@ -419,10 +449,10 @@
           <div class="shot"><img src="img/walk-harmonize.png" alt="Rename suggestions: each local name, the canonical name it becomes, and chips with the LOINC code, the UCUM unit and the other local names that join it" data-full="img/walk-harmonize.png" data-cap="Renames: local name, canonical name, LOINC and UCUM, and which other local names become the same variable."><div class="hl" style="left:4.4%;top:13.3%;width:91.3%;height:11.2%"><span>local name → canonical name, LOINC, UCUM</span></div><div class="hl below" style="left:4.4%;top:59.2%;width:91.3%;height:12%"><span>a drug: RxNorm and ATC, and what else would join it</span></div></div>
           <div class="shot"><img src="img/walk-dx.png" alt="Suggested filters from the diagnosis groups: dx_sepsis, dx_septic_shock, dx_pneumonia and more" data-full="img/walk-dx.png" data-cap="Filters offered from the diagnosis groups, ICD-9 and ICD-10 together."><div class="hl below" style="left:1.5%;top:4%;width:97%;height:45%"><span>dx_ groups across ICD-9 and ICD-10</span></div></div>
         </div>
-      </div>
+      </article>
 
-      <div class="ex reveal" id="ex-plots">
-        <div>
+      <article class="ex" id="ex-plots" role="tabpanel">
+        <div class="txt">
           <div class="n"><i>4</i> compare</div>
           <h3>Histograms you did not have to draw.</h3>
           <p>Data comes from different sources: wards, devices, hospitals, each with its own population and habits. Name the static column that holds the source and every variable is drawn per source on shared bins. Here one unit charts blood pressure in a band of its own; a model trained on the pooled data would carry that shift as bias. The findings flag such differences, and a fix can apply to one source alone.</p>
@@ -433,10 +463,10 @@
           <div class="shot"><img src="img/walk-hist.png" alt="A unit finding with the before and after histograms open" data-full="img/walk-hist.png" data-cap="Show before and after: the values in percent, and the same values after the fix inside the plausible range."><div class="hl" style="left:13.4%;top:62.4%;width:59%;height:33.8%"><span>before and after the fix</span></div></div>
           <div class="shot"><img src="img/walk-selection.png" alt="The overview with a filter: the selection versus the rest of the cohort for nine variables" data-full="img/walk-selection.png" data-cap="A filter on the overview: the selection against the rest of the cohort."><div class="hl" style="left:4.4%;top:16.1%;width:12.8%;height:3.2%"><span>the filter</span></div><div class="hl below" style="left:2.7%;top:36.1%;width:94.5%;height:62%"><span>selection versus the rest</span></div></div>
         </div>
-      </div>
+      </article>
 
-      <div class="ex reveal" id="ex-patient">
-        <div>
+      <article class="ex" id="ex-patient" role="tabpanel">
+        <div class="txt">
           <div class="n"><i>5</i> one patient</div>
           <h3>A single stay, with the cohort for context.</h3>
           <p>Infusions, ventilation and procedures are spans on a rail, text values are events, and each signal has its own scale. The grey band behind a signal is the hourly median and interquartile range of the whole cohort, so an unusual value is unusual at a glance.</p>
@@ -445,10 +475,10 @@
         <div class="fig">
           <div class="shot"><img src="img/walk-encounter.png" alt="One encounter: interventions and events on rails, then oxygen saturation, heart rate and respiratory rate with the cohort band" data-full="img/walk-encounter.png" data-cap="One stay: rails for interventions and events, then each signal with the cohort median and interquartile range behind it."><div class="hl" style="left:16.8%;top:40%;width:82%;height:13.5%"><span>cohort median and IQR behind the signal</span></div></div>
         </div>
-      </div>
+      </article>
 
-      <div class="ex reveal" id="ex-build">
-        <div>
+      <article class="ex" id="ex-build" role="tabpanel">
+        <div class="txt">
           <div class="n"><i>6</i> build</div>
           <h3>From a rule to a dataset.</h3>
           <p>Pick a feature, an operator and a value; the count updates as you type. Save the rule as a filter or a tag, or carve out a sub-cohort with its parent and rule recorded.</p>
@@ -457,6 +487,7 @@
         <div class="fig">
           <div class="shot"><img src="img/walk-build.png" alt="Build a cohort: a rule on maximum lactate selects 54 of 140 encounters; below it the dataset card with 24-hour cutoff and the dropped columns" data-full="img/walk-build.png" data-cap="A rule, the selection it makes, and the dataset card with the columns dropped to avoid leakage."><div class="hl right" style="left:4.4%;top:19.8%;width:12.8%;height:2.9%"><span>the rule</span></div><div class="hl" style="left:2.7%;top:68.1%;width:94.5%;height:29.7%"><span>the dataset: cutoff, split, leakage guard</span></div></div>
         </div>
+      </article>
       </div>
     </div>
   </div>
@@ -672,6 +703,48 @@ X_test, y_test = ds.test()
     });
     card.addEventListener("pointerleave", () => { card.style.transform = ""; });
   });
+
+  // the walkthrough: a horizontal rail with snap points; chips, arrows, keys and swipe move it
+  const rail = document.getElementById("walktrack"), slides = [...rail.querySelectorAll(".ex")];
+  const wsteps = [...document.querySelectorAll(".wstep")], warrows = [...document.querySelectorAll(".warrow")], wfill = document.getElementById("walkfill");
+  let cur = -1, shown = false;
+  const fitHeight = () => { const s = slides[Math.max(cur, 0)]; if (s) rail.style.height = `${s.offsetHeight}px`; };
+  const setActive = (i) => {
+    if (i === cur) return;
+    cur = i;
+    if (shown) slides.forEach((s, k) => s.classList.toggle("on", k === i));
+    wsteps.forEach((b, k) => { b.setAttribute("aria-selected", String(k === i)); b.classList.toggle("done", k < i); });
+    wfill.style.width = `${((i + 1) / slides.length) * 100}%`;
+    warrows[0].disabled = i === 0; warrows[1].disabled = i === slides.length - 1;
+    fitHeight();
+  };
+  const go = (i, smooth = true) => {
+    i = Math.max(0, Math.min(slides.length - 1, i));
+    rail.scrollTo({ left: i * rail.clientWidth, behavior: smooth && !reduced ? "smooth" : "auto" });
+    setActive(i);
+  };
+  rail.addEventListener("scroll", () => requestAnimationFrame(() => setActive(Math.round(rail.scrollLeft / rail.clientWidth))), { passive: true });
+  wsteps.forEach((b) => b.addEventListener("click", () => go(Number(b.dataset.i))));
+  warrows.forEach((a) => a.addEventListener("click", () => go(cur + Number(a.dataset.dir))));
+  rail.addEventListener("keydown", (e) => { if (e.key === "ArrowRight") { go(cur + 1); e.preventDefault(); } else if (e.key === "ArrowLeft") { go(cur - 1); e.preventDefault(); } });
+  addEventListener("resize", () => { rail.scrollLeft = cur * rail.clientWidth; fitHeight(); });
+  rail.querySelectorAll("img").forEach((im) => im.addEventListener("load", fitHeight));
+  // the first slide animates when the walkthrough comes into view, not on page load
+  const wio = new IntersectionObserver((entries) => {
+    if (!entries.some((e) => e.isIntersecting)) return;
+    shown = true; slides[cur].classList.add("on"); wio.disconnect();
+  }, { threshold: 0.2 });
+  wio.observe(rail);
+  setActive(0); addEventListener("load", fitHeight);
+  const showStep = (hash, smooth) => {
+    const i = slides.findIndex((s) => "#" + s.id === hash);
+    if (i < 0) return false;
+    go(i, smooth); document.getElementById("example").scrollIntoView({ behavior: smooth && !reduced ? "smooth" : "auto", block: "start" });
+    return true;
+  };
+  document.querySelectorAll('a[href^="#ex-"]').forEach((a) => a.addEventListener("click", (e) => { if (showStep(a.getAttribute("href"), true)) { e.preventDefault(); history.replaceState(null, "", a.getAttribute("href")); } }));
+  if (location.hash.startsWith("#ex-")) setTimeout(() => showStep(location.hash, false), 50);
+  addEventListener("hashchange", () => showStep(location.hash, true));
 
   // marquee: duplicate the chips once so the loop is seamless
   const track = document.getElementById("track"); track.innerHTML += track.innerHTML;
