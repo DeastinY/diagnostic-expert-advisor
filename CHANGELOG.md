@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+Rename suggestions show the standard they land on
+- Each rename on the profile page reads local name → canonical name, with the concept's label
+  and unit, its LOINC and UCUM codes (RxNorm and ATC for drugs) as chips, and the other local
+  names that become the same variable, so "Admission Weight (Kg)" and "Admission Weight
+  (lbs.)" both going to `weight` is stated instead of looking like a mistake. The API carries
+  this as a `concept` field on harmonize suggestions.
+- Project page rewritten: six features with app screenshots, an example import walkthrough,
+  uv tool quick start, a Python research section, the new icon; all screenshots dark.
+
 Overview as a dashboard
 - The overview is a four-column grid of plots the user composes: "Add plot" opens a catalogue
   with search over kinds, variables and static columns; every panel has its parameters inline,

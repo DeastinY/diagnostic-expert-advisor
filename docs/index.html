@@ -140,7 +140,7 @@
   .feature::before { content: ""; position: absolute; inset: 0; background: radial-gradient(600px circle at var(--mx, 50%) var(--my, 0%), rgba(88,166,255,.16), transparent 40%); opacity: 0; transition: opacity .3s; pointer-events: none; }
   .feature:hover { border-color: rgba(255,255,255,.22); box-shadow: 0 20px 50px rgba(0,0,0,.35); }
   .feature:hover::before { opacity: 1; }
-  .feature .thumb { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 10px; border: 1px solid var(--border-strong); background: #f7f8fa; margin-bottom: 16px; }
+  .feature .thumb { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 10px; border: 1px solid var(--border-strong); background: #0d0d0d; margin-bottom: 16px; }
   .feature .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: left top; transition: transform .6s var(--ease); }
   .feature:hover .thumb img { transform: scale(1.03); }
   .feature h3 { font-size: 17px; margin: 0 8px 8px; }
@@ -298,7 +298,7 @@
       <p class="lead reveal" data-delay="2">Drop a hospital export onto the page. It is imported, checked and annotated, and the plots are ready before you have opened a notebook. Millions of observations fit on a laptop, and the same workflow repeats for every new dataset.</p>
       <ul class="points reveal" data-delay="2">
         <li><b>Fast.</b> Polars and Parquet underneath, lazy and streaming; a cohort with 54 million observations is fine on a laptop.</li>
-        <li><b>Annotated across standards.</b> Variables get LOINC and UCUM, diagnoses are grouped across ICD-9 and ICD-10, drugs get RxNorm and ATC.</li>
+        <li><b>Annotated across standards.</b> Variables get LOINC codes and UCUM units, diagnoses are grouped across ICD-9 and ICD-10, drugs get RxNorm and ATC.</li>
         <li><b>No code to set up,</b> with the depth data scientists need: every step is also a command on the CLI and a function in Python.</li>
       </ul>
       <div class="cta reveal" data-delay="3">
@@ -400,7 +400,7 @@
           <p>Conflicting values at the same timestamp are a different thing: two lab runs or a correction. Nothing happens to them until you pick how to resolve them, for all at once or row by row.</p>
         </div>
         <div class="fig two">
-          <div class="shot"><img src="img/walk-review.png" alt="The review step: tiles with the counts, the verdict and the findings with their fixes ticked" data-full="img/walk-review.png" data-cap="The review step: counts, the verdict, and the fixes biggest first."><div class="hl" style="left:7.3%;top:61.2%;width:87.9%;height:15%"><span>exact repeats, fix ticked</span></div></div>
+          <div class="shot"><img src="img/walk-review.png" alt="The review step: tiles with the counts, the verdict and the findings with their fixes ticked" data-full="img/walk-review.png" data-cap="The review step: counts, the verdict, and the fixes biggest first."><div class="hl" style="left:7.3%;top:49.9%;width:87.9%;height:15.5%"><span>exact repeats, fix ticked</span></div></div>
           <div class="shot"><img src="img/walk-conflicting.png" alt="The finding for conflicting values at the same time, with the rows and a choice of how to resolve them" data-full="img/walk-conflicting.png" data-cap="Conflicting values at the same time: the rows, and how to resolve them."><div class="hl below" style="left:4%;top:88%;width:40%;height:9%"><span>your call</span></div></div>
         </div>
       </div>
@@ -409,11 +409,11 @@
         <div>
           <div class="n"><i>3</i> harmonize</div>
           <h3>Local names get canonical names and codes.</h3>
-          <p>The profile page lists what it recognized: <code>Heart Rate</code> becomes <code>heart_rate</code> with its LOINC code and UCUM unit, three spellings of glucose become one variable. Each rename shows the concept and a confidence, and you apply them one by one or all at once.</p>
+          <p>The profile page lists what it recognized. Each rename reads local name, canonical name, LOINC code and UCUM unit: <code>Heart Rate</code> becomes <code>heart_rate</code>, LOINC 8867-4, in /min. Drugs get RxNorm and ATC. When several local names mean the same thing, the row says so, and three spellings of glucose become one variable.</p>
           <p>Diagnoses arrive as ICD-9 and ICD-10 mixed. They are grouped into <code>dx_</code> columns such as <code>dx_sepsis</code>, so both versions land in the same filter.</p>
         </div>
         <div class="fig stack">
-          <div class="shot"><img src="img/walk-harmonize.png" alt="The suggestions card with the rename suggestions open" data-full="img/walk-harmonize.png" data-cap="Suggestions: 69 renames to canonical names, each with the recognized concept."><div class="hl" style="left:4.4%;top:25%;width:91.3%;height:39%"><span>renames, with the concept behind each</span></div></div>
+          <div class="shot"><img src="img/walk-harmonize.png" alt="Rename suggestions: each local name, the canonical name it becomes, and chips with the LOINC code, the UCUM unit and the other local names that join it" data-full="img/walk-harmonize.png" data-cap="Renames: local name, canonical name, LOINC and UCUM, and which other local names become the same variable."><div class="hl" style="left:4.4%;top:13.3%;width:91.3%;height:11.2%"><span>local name → canonical name, LOINC, UCUM</span></div><div class="hl below" style="left:4.4%;top:59.2%;width:91.3%;height:12%"><span>a drug: RxNorm and ATC, three spellings become one</span></div></div>
           <div class="shot"><img src="img/walk-dx.png" alt="Suggested filters from the diagnosis groups: dx_sepsis, dx_septic_shock, dx_pneumonia and more" data-full="img/walk-dx.png" data-cap="Filters offered from the diagnosis groups, ICD-9 and ICD-10 together."><div class="hl below" style="left:1.5%;top:4%;width:97%;height:45%"><span>dx_ groups across ICD-9 and ICD-10</span></div></div>
         </div>
       </div>
@@ -426,7 +426,7 @@
           <p>On the overview, any filter turns into a comparison: the selected encounters against the rest of the cohort, on shared bins, for the most observed variables.</p>
         </div>
         <div class="fig two">
-          <div class="shot"><img src="img/walk-hist.png" alt="A unit finding with the before and after histograms open" data-full="img/walk-hist.png" data-cap="Show before and after: the values in percent, and the same values after the fix inside the plausible range."><div class="hl" style="left:13.4%;top:62.8%;width:59%;height:33.8%"><span>before and after the fix</span></div></div>
+          <div class="shot"><img src="img/walk-hist.png" alt="A unit finding with the before and after histograms open" data-full="img/walk-hist.png" data-cap="Show before and after: the values in percent, and the same values after the fix inside the plausible range."><div class="hl" style="left:13.4%;top:62.4%;width:59%;height:33.8%"><span>before and after the fix</span></div></div>
           <div class="shot"><img src="img/walk-selection.png" alt="The overview with a filter: the selection versus the rest of the cohort for nine variables" data-full="img/walk-selection.png" data-cap="A filter on the overview: the selection against the rest of the cohort."><div class="hl" style="left:4.4%;top:16.1%;width:12.8%;height:3.2%"><span>the filter</span></div><div class="hl below" style="left:2.7%;top:36.1%;width:94.5%;height:62%"><span>selection versus the rest</span></div></div>
         </div>
       </div>

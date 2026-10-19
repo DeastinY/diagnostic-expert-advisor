@@ -329,3 +329,11 @@ button.link { padding: 2px 0; color: var(--accent); font-size: 12px; font-weight
 .dialog .quick .chip { cursor: pointer; margin: 2px 4px 2px 0; }
 .dialog .side { border-left: 1px solid var(--border); padding-left: 18px; min-height: 200px; }
 .dialog .side .field { margin-bottom: 8px; }
+
+/* rename suggestions: local name → canonical name, then the codes that come with the concept */
+.rename { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; }
+.rename .arrow { color: var(--muted); }
+.rename .canon { font-size: 13px; color: var(--accent); background: var(--accent-soft); padding: 2px 7px; }
+.rename .label { color: var(--ink-2); }
+.codes { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px; }
+.chip.code { font-family: var(--mono); font-size: 11.5px; }

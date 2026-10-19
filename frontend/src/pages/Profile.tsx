@@ -94,8 +94,10 @@ export function Profile() {
                   <div key={s.id} className="sugg">
                     <span className="muted">·</span>
                     <div>
-                      <div>{s.severity ? <><SeverityChip severity={s.severity} /> </> : null}<b>{s.title}</b>{!s.severity && s.confidence < 1 && <span className="muted small"> · {Math.round(s.confidence * 100)}%</span>}</div>
-                      <div className="small muted">{s.detail}</div>
+                      {s.concept ? <Rename s={s} /> : <>
+                        <div>{s.severity ? <><SeverityChip severity={s.severity} /> </> : null}<b>{s.title}</b>{!s.severity && s.confidence < 1 && <span className="muted small"> · {Math.round(s.confidence * 100)}%</span>}</div>
+                        <div className="small muted">{s.detail}</div>
+                      </>}
                     </div>
                     {s.applicable ? <button className="sm" disabled={busy} onClick={() => apply([s.id])}>Apply</button> : <span className="chip">info</span>}
                   </div>
@@ -143,6 +145,30 @@ export function Profile() {
           )}
         </Card>
       </div>
+    </>
+  );
+}
+
+/** A rename: the local name, the canonical name it becomes, and the codes that come with it. */
+function Rename({ s }: { s: Suggestion }) {
+  const c = s.concept!;
+  const codes: [string, string][] = [];
+  if (c.loinc) codes.push(["LOINC", c.loinc]);
+  if (c.rxnorm) codes.push(["RxNorm", c.rxnorm]);
+  if (c.atc) codes.push(["ATC", c.atc]);
+  if (c.ucum) codes.push(["UCUM", c.ucum]);
+  return (
+    <>
+      <div className="rename">
+        <b>{s.variables[0]}</b><span className="arrow">→</span><code className="canon">{c.name}</code>
+        <span className="label">{c.label}{c.unit ? ` (${c.unit})` : ""}</span>
+        {s.confidence < 1 && <span className="muted small">· {Math.round(s.confidence * 100)}%</span>}
+      </div>
+      <div className="codes">
+        {codes.map(([k, v]) => <span key={k} className="chip code"><span className="k">{k}</span> {v}</span>)}
+        {c.joins.length > 0 && <span className="chip">with {c.joins.map((j) => `'${j}'`).join(", ")}</span>}
+      </div>
+      <div className="small muted">{s.detail}</div>
     </>
   );
 }

@@ -42,6 +42,7 @@ class Suggestion:
     confidence: float = 1.0
     variables: list[str] = field(default_factory=list)
     severity: str | None = None  # set for quality checks: info, warning, error
+    concept: dict[str, Any] | None = None  # for renames: the canonical name with its codes
 
     @property
     def applicable(self) -> bool:
@@ -102,18 +103,27 @@ def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Sugges
             matches.pop(v)
     canonical_present = {c.name for c, _ in matches.values()}
 
-    # 1. harmonization
+    # 1. harmonization: local names become the canonical name, which carries the codes
+    by_concept: dict[str, list[str]] = {}
+    for var, (concept, _) in sorted(matches.items()):
+        by_concept.setdefault(concept.name, []).append(var)
     for var, (concept, score) in sorted(matches.items()):
         if var == concept.name:
             continue
+        joins = [v for v in by_concept[concept.name] if v != var]
+        recorded = cfg.variable_units.get(var)
+        detail = f"Recognized as {concept.label}" + (f" ({concept.unit})" if concept.unit else "")
+        detail += f"; match confidence {score:.0%}."
+        if recorded and concept.unit and recorded != concept.unit:
+            detail += f" Recorded in {recorded}, converted to {concept.unit}."
+        if joins:
+            detail += " Becomes one variable with " + ", ".join(f"'{v}'" for v in joins) + "."
         out.append(
             Suggestion(
                 id=f"rename:{var}",
                 kind="harmonize",
                 title=f"Rename '{var}' to '{concept.name}'",
-                detail=f"Recognized as {concept.label}"
-                + (f" ({concept.unit})" if concept.unit else "")
-                + f"; match confidence {score:.0%}.",
+                detail=detail,
                 action={
                     "rename": {var: concept.name},
                     "label": {concept.name: concept.label},
@@ -121,6 +131,16 @@ def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Sugges
                 },
                 confidence=round(score, 2),
                 variables=[var],
+                concept={
+                    "name": concept.name,
+                    "label": concept.label,
+                    "unit": concept.unit,
+                    "loinc": concept.loinc,
+                    "ucum": concept.ucum,
+                    "rxnorm": concept.rxnorm,
+                    "atc": concept.atc,
+                    "joins": joins,
+                },
             )
         )
 
