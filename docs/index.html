@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Diagnostic Expert Advisor</title>
 <link rel="canonical" href="https://deastiny.github.io/diagnostic-expert-advisor/">
-<meta name="description" content="A lightweight toolkit for clinical time series. Drop a hospital export into the browser, get it checked and harmonized, look at every hospital and every patient, and build datasets for your models.">
+<meta name="description" content="The fastest way to get a look at your clinical data. A platform for researchers and clinicians: guided import, automated checks, plots without plotting, harmonization across standards and datasets for research. Runs locally, scales to the HPC cluster.">
 <meta property="og:title" content="Diagnostic Expert Advisor">
-<meta property="og:description" content="A lightweight toolkit for clinical time series, mostly from the browser.">
+<meta property="og:description" content="The fastest way to get a look at your clinical data. Import, check, plot and build datasets, mostly from the browser.">
 <meta property="og:image" content="https://deastiny.github.io/diagnostic-expert-advisor/img/hero.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -140,6 +140,7 @@
   .feature .icon svg { width: 22px; height: 22px; }
   .feature h3 { font-size: 17px; margin-bottom: 8px; }
   .feature p { font-size: 14.5px; color: var(--ink-2); }
+  .feature p code { font-size: 13px; padding: 1px 6px; border-radius: 6px; background: var(--surface-2); color: var(--ink); }
   .feature .more { margin-top: 14px; font-size: 13px; color: var(--accent-2); font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
   .feature .more svg { width: 14px; height: 14px; transition: transform .2s; }
   .feature:hover .more svg { transform: translateX(3px); }
@@ -271,8 +272,8 @@
   <div class="wrap hero-inner">
     <div>
       <div class="pill reveal"><span class="dot"></span> Open source, runs on your own machine</div>
-      <h1 class="title reveal" data-delay="1">A lightweight toolkit<br><span class="grad">for clinical time series.</span></h1>
-      <p class="lead reveal" data-delay="2">Drop a hospital export, a MIMIC-IV folder or FHIR resources onto the page. The DEA works out the layout, runs its checks, and you get plots for the whole cohort, every hospital and every patient. If you would rather script it, the same steps exist on the command line and in Python.</p>
+      <h1 class="title reveal" data-delay="1">The fastest way<br><span class="grad">to get a look at your clinical data.</span></h1>
+      <p class="lead reveal" data-delay="2">A platform for researchers and clinicians alike. Drop a hospital export, a MIMIC-IV folder or FHIR resources onto the page: the data is imported, checked and harmonized, and the plots are ready. The workflow stays the same for every new dataset, and the storage scales from a laptop to the HPC cluster. If you would rather script it, the same steps exist on the command line and in Python.</p>
       <div class="cta reveal" data-delay="3">
         <a class="btn primary" href="#start">Get started</a>
         <a class="btn" href="#explore">Have a look</a>
@@ -306,37 +307,37 @@
     <div class="sec-head reveal">
       <div class="eyebrow">What you get</div>
       <h2>Most of the work happens in the browser.</h2>
-      <p>Import, checks and plots are part of the web app. Every step is also a command on the CLI and a function in Python, for when it has to run in a script.</p>
+      <p>Import, checks, plots and datasets are part of the web app. Every step is also a command on the CLI and a function in Python, for scripts and for the cluster.</p>
     </div>
     <div class="features" data-stagger>
       <article class="feature" data-tab="import">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></div>
-        <h3>Drop your data in</h3><p>Drop a folder or a file onto the page. Tables, MIMIC-IV folders and FHIR bundles are recognized, with their columns, time unit and units. A guided import takes it from there.</p>
+        <h3>Guided data import</h3><p>Throw in a folder of CSV files, Parquet tables, FHIR resources or a MIMIC-IV download. Layout, columns, time unit and units are recognized, the data is harmonized on the way in and stored efficiently. A guided import walks you through it.</p>
         <span class="more">Show me <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       </article>
       <article class="feature" data-tab="import">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><path d="M12 2l7 4v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z"/></svg></div>
-        <h3>The checks run by themselves</h3><p>Mixed units, values out of range, duplicates, numbers stored as text, timestamps before admission. The fixes the DEA is sure about are ticked before the import; you can look at the data behind each one and check again.</p>
+        <h3>Automated checks</h3><p>Mixed units, values out of range, duplicates, numbers stored as text, timestamps before admission and differences between hospitals are reported before anything is written. Many findings come with a fix, and every fix is audited and stored with the cohort.</p>
         <span class="more">Show me <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       </article>
       <article class="feature" data-tab="patients">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
-        <h3>Plots without plotting</h3><p>Once a cohort is loaded there is an overview, distributions, coverage and sampling grids, and a page per patient with the cohort median and IQR behind each signal. No notebook needed.</p>
+        <h3>Plots without plotting</h3><p>Clinical time series suggest the plots worth having, so they come out of the box: cohort overview, distributions per hospital, coverage and sampling grids, and a page per patient with the cohort median and IQR behind each signal. No code.</p>
         <span class="more">Show me <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       </article>
       <article class="feature" data-tab="harmonize">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h7"/><circle cx="18" cy="16" r="3"/></svg></div>
-        <h3>Harmonization</h3><p>Measurements get LOINC and UCUM codes, diagnoses are grouped across ICD-9 and ICD-10, drugs get RxNorm and ATC. Local names go into a mapping file; the optional advisor suggests the rest and only ever sees aggregates.</p>
-        <span class="more">Show me <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      </article>
-      <article class="feature" data-tab="sites">
-        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg></div>
-        <h3>Compare hospitals</h3><p>Name the site column and you get case mix, distributions on shared bins, coverage and sampling per hospital, and findings that tell a unit problem from a real difference in the population.</p>
+        <h3>Harmonization across standards</h3><p>Variables map to LOINC and UCUM codes, diagnoses are grouped across ICD-9 and ICD-10, drugs get RxNorm and ATC. Local naming goes into a mapping file, so every step is reproducible and explainable.</p>
         <span class="more">Show me <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       </article>
       <article class="feature" data-tab="model">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M8 8h8M8 16h5"/></svg></div>
-        <h3>Datasets for models</h3><p>One call builds an encounter-level dataset with a prediction cutoff, drops the columns that would leak the outcome, and splits by encounter, patient or whole hospital.</p>
+        <h3>Datasets for research</h3><p>The data in a machine-learning friendly <code>(X, y)</code> form: an encounter-level table with a prediction cutoff, a leakage guard and a split by encounter, patient or whole hospital. Build sub-cohorts and keep track of your experiments.</p>
+        <span class="more">Show me <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      </article>
+      <article class="feature" data-tab="harmonize">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></div>
+        <h3>Optional AI advisor</h3><p>Any OpenAI-compatible endpoint, local or hosted, suggests harmonization and processing steps from aggregates only, never from patient-level data. With MCP, local AI tools can be attached to the DEA; what grows out of that is open.</p>
         <span class="more">Show me <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       </article>
     </div>
@@ -452,7 +453,7 @@
     <div class="sec-head reveal">
       <div class="eyebrow">How it works</div>
       <h2>Under the hood it is one long table.</h2>
-      <p>Observations, events and intervals are stored as Parquet, bucketed by encounter, and read lazily with Polars. Only what is needed gets loaded, which is why a MIMIC-sized cohort is not much slower to work with than a small one.</p>
+      <p>Observations, events and intervals are stored as Parquet, bucketed by encounter, and read lazily with Polars. Only what is needed gets loaded, which is why a MIMIC-sized cohort is not much slower to work with than a small one. Per-encounter code runs the same way on a laptop and on the SLURM cluster.</p>
     </div>
     <div class="flow" data-stagger id="flowgrid">
       <div class="step"><span class="line"></span><div class="k">01 · import</div><h3>Detect, convert, check</h3><p>The source is scanned lazily, units are normalized per row and the checks run on a streaming pass plus a sample.</p></div>
