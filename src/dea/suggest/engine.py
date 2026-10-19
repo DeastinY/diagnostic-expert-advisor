@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -29,7 +28,6 @@ CLINICAL_TAGS: list[tuple[str, str, str, str, float, str]] = [
 ]
 PLOT_ROLES = ("vital_sign", "blood_gas", "ventilation", "medication")
 # mass or amount per volume (ug/mL, mg/dL, mmol/L, U/L): a level, never a dose
-_CONCENTRATION = re.compile(r"^(?:n|u|µ|mc|m|k)?(?:g|mol|eq|iu|u)/(?:d|m|u|µ)?l$", re.I)
 
 
 @dataclass
@@ -65,17 +63,17 @@ def _matches(variables: list[str]) -> dict[str, tuple[Concept, float]]:
 def unit_fits(units: UnitTable, unit: str | None, concept: Concept) -> bool:
     """Whether a variable recorded in ``unit`` can be the drug ``concept`` at all.
 
-    A concentration under a drug's name is the drug *level* (vancomycin in ug/mL), not the
-    dose or infusion rate the concept stands for, however well the name matches. Other unit
-    differences (mcg/kg/min against mg/kg/h) are left to the unit normalizer, which converts
-    what it can and reports the rest, so only medication concepts are screened here.
+    A medication concept stands for a dose or an infusion rate in one unit. A variable whose
+    recorded unit is that unit, or converts into it (mcg/kg/min into mg/kg/h), fits. One whose
+    unit cannot be converted at all does not, however well the name matches: a concentration
+    under a drug's name is the drug *level* (vancomycin in ug/mL), "dose" under heparin is the
+    subcutaneous prophylaxis, not the infusion. Variables without a recorded unit, and concepts
+    that are not medications, are left to the unit normalizer and the range checks.
     """
-    if not unit or concept.role != "medication":
+    if not unit or concept.role != "medication" or not concept.ucum:
         return True
     ucum = units.to_ucum(unit) or ""
-    if ucum == concept.ucum or units.conversion(ucum, concept.ucum, concept.name) is not None:
-        return True
-    return not _CONCENTRATION.match(UnitTable.key(ucum))
+    return ucum == concept.ucum or units.conversion(ucum, concept.ucum, concept.name) is not None
 
 
 def _fill_for(concept: Concept | None, prof: VariableProfile) -> str:

@@ -8,6 +8,11 @@ Rename suggestions show the standard they land on
   names that become the same variable, so "Admission Weight (Kg)" and "Admission Weight
   (lbs.)" both going to `weight` is stated instead of looking like a mistake. The API carries
   this as a `concept` field on harmonize suggestions.
+- A medication match is dropped when the variable's recorded unit cannot be converted into
+  the concept's unit at all (a level in ug/mL, a bolus amount in mg against an infusion rate,
+  "dose" under a heparin name), not only when it is a concentration. mcg/h, mg/h and mg/kg/h
+  got their aliases, and ug/kg/min converts into mg/kg/h, so rates in other spellings still
+  match.
 - Project page rewritten: six features with app screenshots, an example import walkthrough,
   uv tool quick start, a Python research section, the new icon; all screenshots dark.
 

@@ -107,3 +107,17 @@ def test_unit_fits_screens_only_concentrations_under_drug_names() -> None:
     assert unit_fits(units, "mg", vanco) and unit_fits(units, "", vanco)
     assert unit_fits(units, "mcg/kg/min", propofol)  # a rate in another unit: the normalizer's job
     assert unit_fits(units, "G/L", wbc)  # not a drug: a count per volume is what it should be
+
+
+def test_drug_in_an_unconvertible_unit_is_not_renamed(tmp_path: Path) -> None:
+    # Subcutaneous prophylaxis charted as "dose" under a heparin name is not the infusion in
+    # U/h; a unit that cannot be converted into the concept's unit at all blocks the rename.
+    # A rate in another unit still converts, so it is renamed.
+    cohort = generate_cohort(4, seed=3, max_hours=24)
+    cohort = cohort.rename_variables({"Lactate": "Heparin Sodium"})
+    cohort.config.variable_units["Heparin Sodium"] = "dose"
+    sugg = {s.id: s for s in suggest(cohort)}
+    assert "rename:Heparin Sodium" not in sugg
+    cohort.config.variable_units["Heparin Sodium"] = "units/hour"
+    sugg = {s.id: s for s in suggest(cohort)}
+    assert sugg["rename:Heparin Sodium"].action["rename"] == {"Heparin Sodium": "heparin"}

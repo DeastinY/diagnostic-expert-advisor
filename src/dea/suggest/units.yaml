@@ -28,6 +28,9 @@ aliases:
   "g/L": ["g/l"]
   "10*9/L": ["10*9/l", "giga/l", "k/ul", "K/uL", "10^9/l", "x10^9/l", "10*3/ul", "thousand/ul"]
   "ug/kg/min": ["ug/kg/min", "mcg/kg/min", "µg/kg/min", "mcgkgmin"]
+  "mg/kg/h": ["mg/kg/h", "mg/kg/hr", "mg/kg/hour"]
+  "ug/h": ["ug/h", "ug/hr", "ug/hour", "mcg/h", "mcg/hr", "mcg/hour", "µg/h", "µg/hour"]
+  "mg/h": ["mg/h", "mg/hr", "mg/hour"]
   "kg": [kg, kilogram]
   "[lb_av]": [lb, lbs, pound, pounds]
   "cm": [cm]
@@ -54,6 +57,11 @@ conversions:
   # monovalent ions: 1 mEq = 1 mmol
   - { from: "meq/L", to: "mmol/L", factor: 1, concept: sodium }
   - { from: "meq/L", to: "mmol/L", factor: 1, concept: potassium }
+  # infusion rates: per minute and per hour, micrograms and milligrams
+  - { from: "ug/kg/min", to: "mg/kg/h", factor: 0.06 }
+  - { from: "mg/kg/h", to: "ug/kg/min", factor: 16.6666666667 }
+  - { from: "ug/h", to: "mg/h", factor: 0.001 }
+  - { from: "mg/h", to: "ug/h", factor: 1000 }
   # a dose charted as "units" for a per-hour item is the hourly rate
   - { from: "U", to: "U/h", factor: 1, concept: heparin }
   - { from: "U", to: "U/h", factor: 1, concept: insulin }
