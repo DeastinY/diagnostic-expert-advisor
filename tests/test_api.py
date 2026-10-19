@@ -411,3 +411,65 @@ def test_hist_before_after_and_series(client: TestClient) -> None:
     s = client.get("/api/cohorts/unit/series", params={"variable": v, "encounter": eid}).json()
     assert s["encounter"] == eid and len(s["hours"]) == len(s["values"]) > 10
     assert s["hours"] == sorted(s["hours"])
+
+
+def test_dashboard_default_panels_and_every_kind_draws(client: TestClient) -> None:
+    import json
+
+    d = client.get("/api/cohorts/unit/dashboard").json()
+    assert d["default"] is True and {k["kind"] for k in d["catalog"]} >= {"los", "trajectory"}
+    kinds = [p["kind"] for p in d["panels"]]
+    assert kinds[:3] == ["los", "tags", "coverage"] or kinds[:3] == [
+        "los",
+        "observations",
+        "coverage",
+    ]
+    assert "trajectory" in kinds and all(1 <= p["size"] <= 4 for p in d["panels"])
+    for p in d["panels"]:
+        r = client.get(
+            "/api/cohorts/unit/panel", params={"kind": p["kind"], "params": json.dumps(p["params"])}
+        )
+        assert r.status_code == 200, (p, r.text)
+        body = r.json()
+        assert "spec" in body and (body["spec"] is not None or body["note"]), p
+    # kinds the default may not include
+    detail = client.get("/api/cohorts/unit").json()
+    sc = detail["static_columns"]
+    v = detail["variables"][0]
+    for kind, params in (
+        ("crosstab", {"column": sc[0], "by": sc[1 % len(sc)], "normalize": True}),
+        ("variable", {"variable": v}),
+        ("observations", {"n": 5}),
+        ("gallery", {"n": 6}),
+        ("sites", {}),
+        ("site_coverage", {}),
+        ("selection", {}),
+    ):
+        r = client.get(
+            "/api/cohorts/unit/panel", params={"kind": kind, "params": json.dumps(params)}
+        )
+        assert r.status_code == 200, (kind, r.text)
+    assert client.get("/api/cohorts/unit/panel", params={"kind": "nope"}).status_code == 400
+    r = client.get(
+        "/api/cohorts/unit/panel",
+        params={"kind": "static", "params": json.dumps({"column": "zzz"})},
+    )
+    assert r.status_code == 400
+
+
+def test_dashboard_is_saved_and_reset(client: TestClient) -> None:
+    panels = [
+        {"id": "a", "kind": "los", "params": {}, "size": 4, "title": "Stays"},
+        {"id": "b", "kind": "observations", "params": {"n": 5}, "size": 2},
+    ]
+    r = client.put("/api/cohorts/unit/dashboard", json={"panels": panels})
+    assert r.status_code == 200 and r.json()["default"] is False
+    d = client.get("/api/cohorts/unit/dashboard").json()
+    assert d["default"] is False and [p["id"] for p in d["panels"]] == ["a", "b"]
+    assert d["panels"][0]["title"] == "Stays" and d["panels"][0]["size"] == 4
+    assert client.get("/api/cohorts/unit").json()["config"]["dashboard"][0]["id"] == "a"
+    bad = client.put("/api/cohorts/unit/dashboard", json={"panels": [{"id": "x", "kind": "nope"}]})
+    assert bad.status_code == 400
+    r = client.put("/api/cohorts/unit/dashboard", json={"panels": []})
+    assert r.json()["default"] is True
+    assert client.get("/api/cohorts/unit/dashboard").json()["default"] is True

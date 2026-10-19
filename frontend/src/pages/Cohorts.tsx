@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { buildTree, CohortCard } from "../components/CohortCard";
 import { DemoForm } from "../components/ImportForms";
+import { ImportSummary } from "../components/ImportSummary";
 import { fromDataTransfer, ImportWizard, type Picked } from "../components/ImportWizard";
 import { Alert, Card, Spinner, Tabs, toast, useAsync } from "../components/ui";
 
@@ -19,6 +20,7 @@ export function Cohorts() {
   const [query, setQuery] = useState("");
   const [dropped, setDropped] = useState<Picked[] | null>(null);
   const [over, setOver] = useState(false);
+  const [just, setJust] = useState<string | null>(null); // the cohort imported a moment ago
   const tree = useMemo(() => buildTree(data ?? [], query), [data, query]);
   const totals = useMemo(() => ({
     cohorts: data?.length ?? 0,
@@ -57,7 +59,7 @@ export function Cohorts() {
           <>
             <Card title="Add data">
               <Tabs tabs={["Import", "Demo"]} value={tab} onChange={setTab} />
-              {tab === "Demo" ? <DemoForm onDone={(n) => nav(`/c/${n}`)} /> : <ImportWizard dropped={dropped} onMore={reload} onImported={reload} onDone={(n, where) => nav(where === "profile" ? `/c/${n}/profile` : `/c/${n}`)} />}
+              {tab === "Demo" ? <DemoForm onDone={(n) => nav(`/c/${n}`)} /> : <ImportWizard dropped={dropped} onMore={reload} onImported={(n) => { reload(); setJust(n); }} onDone={(n, where) => nav(where === "profile" ? `/c/${n}/profile` : `/c/${n}`)} />}
             </Card>
             <div className="card empty" style={{ textAlign: "left", padding: "22px 24px" }}>
               <h2 style={{ marginTop: 0 }}>How it goes</h2>
@@ -84,12 +86,13 @@ export function Cohorts() {
             </div>
             <Card title="Add data">
               <Tabs tabs={["Import", "Demo"]} value={tab} onChange={setTab} />
-              {tab === "Demo" ? <DemoForm onDone={(n) => nav(`/c/${n}`)} /> : <ImportWizard dropped={dropped} onMore={reload} onImported={reload} onDone={(n, where) => nav(where === "profile" ? `/c/${n}/profile` : `/c/${n}`)} />}
+              {tab === "Demo" ? <DemoForm onDone={(n) => nav(`/c/${n}`)} /> : <ImportWizard dropped={dropped} onMore={reload} onImported={(n) => { reload(); setJust(n); }} onDone={(n, where) => nav(where === "profile" ? `/c/${n}/profile` : `/c/${n}`)} />}
             </Card>
           </>
         )}
         {loading && empty === undefined && <Spinner />}
       </div>
+      {just && <div style={{ marginTop: 18 }}><ImportSummary name={just} onClose={() => setJust(null)} /></div>}
       {over && <div className="drop-veil">Drop to add the data</div>}
     </div>
   );

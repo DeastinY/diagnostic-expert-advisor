@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -63,6 +63,18 @@ class ProcessingConfig(BaseModel):
         return self.fill_overrides.get(variable, self.fill)
 
 
+class DashboardPanel(BaseModel):
+    """One chart on the overview: what to draw, with which parameters, how wide."""
+
+    id: str
+    kind: str = Field(
+        description="los, tags, coverage, static, crosstab, variable, trajectory, ..."
+    )
+    params: dict[str, Any] = Field(default_factory=dict)
+    size: int = Field(default=2, ge=1, le=4, description="columns of the four-column grid")
+    title: str | None = None
+
+
 class CohortConfig(BaseModel):
     """Everything DEA needs to know about a cohort besides the data itself."""
 
@@ -71,6 +83,9 @@ class CohortConfig(BaseModel):
     filters: list[Rule] = Field(default_factory=list)
     tags: list[Rule] = Field(default_factory=list)
     plots: list[str] = Field(default_factory=list, description="Variables to chart by default")
+    dashboard: list[DashboardPanel] = Field(
+        default_factory=list, description="The overview's panels; empty means DEA's default"
+    )
     variable_labels: dict[str, str] = Field(default_factory=dict)
     variable_units: dict[str, str] = Field(default_factory=dict)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)

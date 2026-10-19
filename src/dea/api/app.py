@@ -198,6 +198,10 @@ class SiteIn(BaseModel):
     column: str | None = None
 
 
+class DashboardIn(BaseModel):
+    panels: list[dict[str, Any]]  # DashboardPanel records; an empty list restores the default
+
+
 class ProcessingIn(BaseModel):
     resample_every: str | None = None
     aggregate: str = "mean"
@@ -233,6 +237,389 @@ class AdviseApplyIn(BaseModel):
 
 NO_PATHS: list[str] = Form(default=[])  # form field of the folder upload, see upload_files
 COVERAGE_VARIABLES = 40  # rows of the coverage heatmap; MIMIC has hundreds of variables
+
+# What the overview can show. ``params`` describe the pickers the "add plot" dialog offers:
+# variable (a variable name), static / static_categorical (a static column), every (a grid),
+# number, bool. ``size`` is the default width in columns of the four-column grid.
+PANEL_CATALOG: list[dict[str, Any]] = [
+    {
+        "kind": "los",
+        "label": "Length of stay",
+        "description": "How long the stays are, in whole days",
+        "params": [],
+        "size": 2,
+    },
+    {
+        "kind": "tags",
+        "label": "Tags",
+        "description": "Encounters per tag, the most frequent first",
+        "params": [{"name": "n", "type": "number", "default": 8}],
+        "size": 2,
+    },
+    {
+        "kind": "coverage",
+        "label": "When is what measured",
+        "description": "Share of encounters with data per variable and 4-hour window",
+        "params": [
+            {"name": "max_hours", "type": "number", "default": 168},
+            {"name": "variables", "type": "number", "default": 40},
+        ],
+        "size": 4,
+    },
+    {
+        "kind": "static",
+        "label": "Static attribute",
+        "description": "Age, sex, unit, outcome: the distribution of one static column",
+        "params": [{"name": "column", "type": "static", "required": True}],
+        "size": 2,
+    },
+    {
+        "kind": "crosstab",
+        "label": "One attribute by another",
+        "description": "Outcome by sex, outcome per site: stacked counts of two static columns",
+        "params": [
+            {"name": "column", "type": "static_categorical", "required": True},
+            {"name": "by", "type": "static_categorical", "required": True},
+            {"name": "normalize", "type": "bool", "default": False},
+        ],
+        "size": 2,
+    },
+    {
+        "kind": "variable",
+        "label": "Variable across encounters",
+        "description": "Per-encounter mean of a variable: a histogram, or split by a static column",
+        "params": [
+            {"name": "variable", "type": "variable", "required": True},
+            {"name": "by", "type": "static_categorical"},
+        ],
+        "size": 2,
+    },
+    {
+        "kind": "trajectory",
+        "label": "Trajectory",
+        "description": "Median and interquartile band since admission, optionally per group",
+        "params": [
+            {"name": "variable", "type": "variable", "required": True},
+            {"name": "every", "type": "every", "default": "1h"},
+            {"name": "max_hours", "type": "number", "default": 168},
+            {"name": "by", "type": "static_categorical"},
+        ],
+        "size": 4,
+    },
+    {
+        "kind": "sites",
+        "label": "Across sites: distributions",
+        "description": "The most observed variables per site, on shared bins",
+        "params": [{"name": "column", "type": "static_categorical"}],
+        "size": 4,
+    },
+    {
+        "kind": "site_coverage",
+        "label": "Across sites: coverage",
+        "description": "Variables by sites: the share of encounters with data",
+        "params": [{"name": "column", "type": "static_categorical"}],
+        "size": 4,
+    },
+    {
+        "kind": "observations",
+        "label": "Most observed variables",
+        "description": "Observations per variable",
+        "params": [{"name": "n", "type": "number", "default": 20}],
+        "size": 2,
+    },
+    {
+        "kind": "gallery",
+        "label": "Distributions",
+        "description": "A small histogram per variable, the most observed first",
+        "params": [{"name": "n", "type": "number", "default": 24}],
+        "size": 4,
+    },
+    {
+        "kind": "selection",
+        "label": "Selection versus the rest",
+        "description": "The selected encounters against everyone else, on shared bins",
+        "params": [],
+        "size": 4,
+    },
+]
+EVERY_CHOICES = ["15m", "30m", "1h", "4h", "12h", "1d"]
+
+
+def _find_column(columns: list[str], names: set[str]) -> str | None:
+    return next((c for c in columns if c.lower() in names), None)
+
+
+def _categorical(static: pl.DataFrame, column: str) -> bool:
+    s = static[column]
+    return not s.dtype.is_numeric() or s.dtype == pl.Boolean or s.n_unique() <= 12
+
+
+def _site_column(cohort: Cohort) -> str | None:
+    """The column that names the site, if it is one: a few categories, not a number."""
+    from dea.quality import detect_site_column
+
+    static = cohort.static
+
+    def usable(c: str | None) -> str | None:
+        if not c or c not in static.columns:
+            return None
+        s = static[c]
+        return c if 2 <= s.drop_nulls().n_unique() <= 50 and _categorical(static, c) else None
+
+    return (
+        usable(cohort.config.site_column)
+        or usable(detect_site_column(static))
+        or usable(
+            _find_column(static.columns, {"first_careunit", "site", "hospital", "unit", "ward"})
+        )
+    )
+
+
+def _default_dashboard(cohort: Cohort) -> list[dict[str, Any]]:
+    """DEA's overview when the user has not composed one: stay, tags, coverage, who the
+    patients are, how they fared by sex and by site, and one trajectory."""
+    cfg = cohort.config
+    static = cohort.static
+    cols = static.columns
+    age = _find_column(cols, {"age", "anchor_age", "age_years"})
+    sex = _find_column(cols, {"sex", "gender"})
+    outcome = _find_column(cols, {"outcome", "mortality", "hospital_expire_flag", "died", "death"})
+    site = _site_column(cohort)
+    panels: list[dict[str, Any]] = [{"kind": "los", "params": {}, "size": 2}]
+    panels.append(
+        {"kind": "tags", "params": {"n": 8}, "size": 2}
+        if cfg.tags
+        else {"kind": "observations", "params": {"n": 8}, "size": 2}
+    )
+    panels.append({"kind": "coverage", "params": {"max_hours": 168, "variables": 40}, "size": 4})
+    if age:
+        panels.append({"kind": "static", "params": {"column": age}, "size": 2})
+    if sex:
+        panels.append({"kind": "static", "params": {"column": sex}, "size": 2})
+    if outcome and sex:
+        panels.append(
+            {
+                "kind": "crosstab",
+                "params": {"column": sex, "by": outcome, "normalize": True},
+                "size": 2,
+            }
+        )
+    if outcome and site and site != sex:
+        panels.append(
+            {
+                "kind": "crosstab",
+                "params": {"column": site, "by": outcome, "normalize": True},
+                "size": 2,
+            }
+        )
+    variable = next((v for v in cfg.plots if v in cohort.variables), None)
+    if variable is None:
+        counts = cohort.variable_counts()
+        variable = counts.get_column("variable")[0] if counts.height else None
+    if variable:
+        panels.append(
+            {
+                "kind": "trajectory",
+                "params": {"variable": variable, "every": "1h", "max_hours": 168},
+                "size": 4,
+            }
+        )
+    return [{"id": f"p{i}", "title": None, **p} for i, p in enumerate(panels)]
+
+
+def _panel(
+    cohort: Cohort, full: Cohort, kind: str, opts: dict[str, Any], dark: bool
+) -> dict[str, Any]:
+    """The Vega-Lite spec of one dashboard panel, plus a note on what was left out."""
+    from dea import charts
+
+    cfg = cohort.config
+    static = cohort.static
+    out: dict[str, Any] = {"spec": None, "note": None}
+    if kind == "los":
+        feats = cohort.features()
+        if feats.height:
+            out["spec"] = charts.histogram(
+                feats["los_hours"] / 24, "Length of stay", "days", dark=dark, integer=True
+            ).to_dict()
+    elif kind == "tags":
+        if cfg.tags:
+            tags = cohort.tag_matrix()
+            counts = pl.DataFrame(
+                {
+                    "tag": [r.label for r in cfg.tags],
+                    "encounters": [int(tags[r.label].sum()) for r in cfg.tags],
+                }
+            ).sort(["encounters", "tag"], descending=[True, False])
+            n = int(opts.get("n") or 8)
+            top = counts.head(n)
+            out["spec"] = charts.horizontal_bars(
+                top, "tag", "encounters", "Encounters", dark=dark, colorful=True
+            ).to_dict()
+            if counts.height > top.height:
+                out["note"] = f"the {top.height} most frequent of {counts.height} tags"
+        else:
+            out["note"] = "No tags yet. Add them in Build cohort or apply the suggestions."
+    elif kind == "coverage":
+        max_hours = float(opts.get("max_hours") or 168)
+        n_vars = int(opts.get("variables") or COVERAGE_VARIABLES)
+        matrix = cohort.coverage_matrix(every="4h", max_hours=max_hours)
+        total = matrix.get_column("variable").n_unique() if matrix.height else 0
+        heat = charts.coverage_heatmap(
+            matrix, cfg.variable_labels, 4.0, dark=dark, max_variables=n_vars
+        )
+        out["spec"] = heat.to_dict() if heat is not None else None
+        if total > n_vars:
+            out["note"] = f"the {n_vars} best covered of {total} variables"
+    elif kind == "static":
+        column = opts.get("column")
+        if not column or column not in static.columns:
+            raise KeyError(f"unknown static column {column!r}")
+        series = static[column]
+        if _categorical(static, column):
+            out["spec"] = charts.category_counts(
+                series, cfg.label(column), dark=dark, colorful=True
+            ).to_dict()
+        else:
+            out["spec"] = charts.histogram(
+                series, cfg.label(column), dark=dark, integer=series.dtype.is_integer()
+            ).to_dict()
+    elif kind == "crosstab":
+        column, by = opts.get("column"), opts.get("by")
+        for c in (column, by):
+            if not c or c not in static.columns:
+                raise KeyError(f"unknown static column {c!r}")
+        chart = charts.stacked_counts(
+            static,
+            column,
+            by,
+            cfg.label(column),
+            by_title=cfg.label(by),
+            dark=dark,
+            normalize=bool(opts.get("normalize")),
+        )
+        out["spec"] = chart.to_dict() if chart is not None else None
+    elif kind == "variable":
+        variable, by = opts.get("variable"), opts.get("by")
+        feats = cohort.features()
+        if not variable or f"{variable}__mean" not in feats.columns:
+            raise KeyError(f"unknown variable {variable!r}")
+        unit = cfg.variable_units.get(variable, "")
+        if by and by in static.columns:
+            out["spec"] = charts.group_boxplot(
+                feats, f"{variable}__mean", by, cfg.label(variable), unit, dark=dark
+            ).to_dict()
+        else:
+            out["spec"] = charts.histogram(
+                feats[f"{variable}__mean"], cfg.label(variable), unit, dark=dark
+            ).to_dict()
+    elif kind == "trajectory":
+        variable = opts.get("variable")
+        if not variable or variable not in cohort.variables:
+            raise KeyError(f"unknown variable {variable!r}")
+        by = opts.get("by") or None
+        traj = cohort.trajectory(
+            variable,
+            every=str(opts.get("every") or "1h"),
+            by=by,
+            max_hours=float(opts.get("max_hours") or 168),
+        )
+        if not traj.is_empty():
+            out["spec"] = charts.trajectory(
+                traj, cfg.label(variable), cfg.variable_units.get(variable, ""), by=by, dark=dark
+            ).to_dict()
+    elif kind in ("sites", "site_coverage"):
+        from dea.quality import site_bins, site_profile
+
+        column = opts.get("column") or _site_column(cohort)
+        if not column or column not in static.columns:
+            out["note"] = "Pick the static column that names the site."
+            return out
+        prof = site_profile(cohort, column)
+        by_obs = (
+            prof.group_by("variable")
+            .agg(pl.col("n_obs").sum().alias("n"))
+            .sort("n", descending=True)
+            .get_column("variable")
+            .to_list()
+        )
+        big = (
+            prof.group_by("site")
+            .agg(pl.col("n_site").first())
+            .sort(["n_site", "site"], descending=[True, False])
+            .get_column("site")
+            .to_list()
+        )
+        if kind == "sites":
+            bins = site_bins(cohort, column, by_obs[:12]).filter(pl.col("site").is_in(big[:8]))
+            chart = charts.site_distributions(
+                bins, cfg.variable_labels, cfg.variable_units, dark=dark
+            )
+            out["spec"] = chart.to_dict() if chart is not None else None
+            if len(big) > 8:
+                out["note"] = f"the 8 largest of {len(big)} sites"
+        else:
+            shown = prof.filter(
+                pl.col("site").is_in(big[:12]) & pl.col("variable").is_in(by_obs[:30])
+            )
+            chart = charts.site_matrix(
+                shown,
+                "coverage",
+                "Share of encounters with data",
+                labels=cfg.variable_labels,
+                dark=dark,
+            )
+            out["spec"] = chart.to_dict() if chart is not None else None
+    elif kind == "observations":
+        counts = cohort.variable_counts().rename({"variable": "name"})
+        n = int(opts.get("n") or 20)
+        if counts.height:
+            out["spec"] = charts.horizontal_bars(
+                counts.head(n), "name", "n_observations", "Observations", dark=dark, colorful=True
+            ).to_dict()
+            if counts.height > n:
+                out["note"] = f"the {n} most observed of {counts.height} variables"
+    elif kind == "gallery":
+        n = int(opts.get("n") or 24)
+        top = (
+            cohort.variable_counts()
+            .sort("n_observations", descending=True)
+            .get_column("variable")
+            .to_list()[:n]
+        )
+        gallery = charts.distribution_gallery(
+            cohort.distribution_bins(variables=top),
+            cfg.variable_labels,
+            cfg.variable_units,
+            dark=dark,
+        )
+        out["spec"] = gallery.to_dict() if gallery is not None else None
+    elif kind == "selection":
+        if len(cohort) >= len(full):
+            out["note"] = "Select some encounters with a filter to compare them with the rest."
+            return out
+        from dea.quality.sites import site_bins
+
+        ids = cohort.encounter_ids
+        tagged = full.static.with_columns(
+            pl.when(pl.col("encounter_id").is_in(ids))
+            .then(pl.lit("Selection"))
+            .otherwise(pl.lit("Rest of cohort"))
+            .alias("_selection")
+        )
+        both = Cohort(tagged, full.dynamic, events=full.events, config=full.config, root=full.root)
+        top = (
+            cohort.variable_counts()
+            .sort("n_observations", descending=True)
+            .get_column("variable")
+            .to_list()[:9]
+        )
+        bins = site_bins(both, "_selection", top, sample=150)
+        dist = charts.site_distributions(
+            bins, cfg.variable_labels, cfg.variable_units, dark=dark, columns=3
+        )
+        out["spec"] = dist.to_dict() if dist is not None else None
+    return out
 
 
 def _code_signature() -> str:
@@ -873,6 +1260,54 @@ def create_app(
                         feats[f"{variable}__mean"], cfg.label(variable), unit, dark=dark
                     ).to_dict()
         return out
+
+    # ---- the overview dashboard: a grid of panels the user composes
+    @app.get("/api/cohorts/{name}/dashboard")
+    def get_dashboard(name: str) -> dict[str, Any]:
+        cohort = store.get(name)
+        saved = [p.model_dump() for p in cohort.config.dashboard]
+        return {
+            "panels": saved or _default_dashboard(cohort),
+            "default": not saved,
+            "catalog": PANEL_CATALOG,
+        }
+
+    @app.put("/api/cohorts/{name}/dashboard")
+    def set_dashboard(name: str, body: DashboardIn) -> dict[str, Any]:
+        from dea.core.config import DashboardPanel
+
+        cohort = store.get(name)
+        known = {k["kind"] for k in PANEL_CATALOG}
+        try:
+            panels = [DashboardPanel(**p) for p in body.panels]
+        except Exception as exc:  # pydantic validation
+            raise HTTPException(400, str(exc)) from exc
+        for p in panels:
+            if p.kind not in known:
+                raise HTTPException(400, f"unknown panel kind {p.kind!r}")
+        cohort.config.dashboard = panels
+        cohort.config.save(cohort.root / "cohort.yaml")
+        store.invalidate(name)
+        return {"panels": [p.model_dump() for p in panels], "default": not panels}
+
+    @app.get("/api/cohorts/{name}/panel")
+    @cached(store, "panel")
+    def get_panel(
+        name: str, kind: str, params: str = "{}", where: Where = None, dark: bool = False
+    ) -> dict[str, Any]:
+        """One dashboard panel's chart, by kind and JSON parameters."""
+        try:
+            opts = json.loads(params) if params else {}
+        except ValueError as exc:
+            raise HTTPException(400, f"params is not JSON: {exc}") from exc
+        if kind not in {k["kind"] for k in PANEL_CATALOG}:
+            raise HTTPException(400, f"unknown panel kind {kind!r}")
+        full = store.get(name)
+        cohort = _filtered(full, where)
+        try:
+            return _panel(cohort, full, kind, opts, dark)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     @app.get("/api/cohorts/{name}/charts/profile")
     @cached(store, "charts_profile")

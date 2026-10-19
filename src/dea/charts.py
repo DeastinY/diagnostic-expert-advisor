@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import altair as alt
 import polars as pl
@@ -202,8 +203,14 @@ def histogram(
     return _apply(alt.layer(*layers).properties(height=height), t)
 
 
-def category_counts(values: pl.Series, title: str, dark: bool = False, max_rows: int = 14):
-    """Horizontal bars with direct count labels for a categorical column."""
+def category_counts(
+    values: pl.Series, title: str, dark: bool = False, max_rows: int = 14, colorful: bool = False
+):
+    """Horizontal bars with direct count labels for a categorical column.
+
+    ``colorful`` gives each category its own hue from the series palette (the label still
+    carries the identity; the hue only makes a crowded overview easier to scan).
+    """
     t = theme(dark)
     counts = (
         values.cast(pl.String())
@@ -216,13 +223,24 @@ def category_counts(values: pl.Series, title: str, dark: bool = False, max_rows:
     base = alt.Chart(df).encode(
         y=alt.Y("category:N", sort="-x", title=None, axis=alt.Axis(labelLimit=180))
     )
-    bars = base.mark_bar(color=t.accent, cornerRadiusEnd=3, height={"band": 0.7}).encode(
-        x=alt.X("count:Q", title="Encounters", axis=alt.Axis(grid=True)),
-        tooltip=[
+    mark = {"cornerRadiusEnd": 3, "height": {"band": 0.7}}
+    enc: dict[str, Any] = {
+        "x": alt.X("count:Q", title="Encounters", axis=alt.Axis(grid=True)),
+        "tooltip": [
             alt.Tooltip("category:N", title=title),
             alt.Tooltip("count:Q", title="Encounters"),
         ],
-    )
+    }
+    if colorful:
+        cats = df["category"].tolist()
+        enc["color"] = alt.Color(
+            "category:N",
+            scale=alt.Scale(domain=cats, range=_cycle(t.series, len(cats))),
+            legend=None,
+        )
+    else:
+        mark["color"] = t.accent
+    bars = base.mark_bar(**mark).encode(**enc)
     text = base.mark_text(align="left", dx=4, color=t.ink2, fontSize=11).encode(
         x="count:Q", text="count:Q"
     )
@@ -239,8 +257,9 @@ def horizontal_bars(
     tooltip_extra: Sequence[str] = (),
     dark: bool = False,
     labels: bool = True,
+    colorful: bool = False,
 ):
-    """Sorted horizontal bars (single hue) with optional direct value labels."""
+    """Sorted horizontal bars with optional direct value labels; one hue, or one per row."""
     t = theme(dark)
     df = frame.sort([value, category], descending=[True, False]).to_pandas()
     base = alt.Chart(df).encode(
@@ -251,14 +270,25 @@ def horizontal_bars(
             axis=alt.Axis(labelLimit=200, labelOverlap=False),
         )
     )
-    bars = base.mark_bar(color=t.accent, cornerRadiusEnd=3, height={"band": 0.65}).encode(
-        x=alt.X(f"{value}:Q", title=title, axis=alt.Axis(format=value_format, grid=True)),
-        tooltip=[
+    mark = {"cornerRadiusEnd": 3, "height": {"band": 0.65}}
+    enc: dict[str, Any] = {
+        "x": alt.X(f"{value}:Q", title=title, axis=alt.Axis(format=value_format, grid=True)),
+        "tooltip": [
             alt.Tooltip(f"{category}:N", title=category),
             alt.Tooltip(f"{value}:Q", title=title, format=value_format),
             *[alt.Tooltip(f"{c}:N", title=c) for c in tooltip_extra],
         ],
-    )
+    }
+    if colorful:
+        cats = df[category].tolist()
+        enc["color"] = alt.Color(
+            f"{category}:N",
+            scale=alt.Scale(domain=cats, range=_cycle(t.series, len(cats))),
+            legend=None,
+        )
+    else:
+        mark["color"] = t.accent
+    bars = base.mark_bar(**mark).encode(**enc)
     layers = [bars]
     if labels:
         layers.append(
@@ -267,6 +297,82 @@ def horizontal_bars(
             )
         )
     return _apply(alt.layer(*layers).properties(height=max(150, height_per_row * len(df) + 24)), t)
+
+
+def stacked_counts(
+    frame: pl.DataFrame,
+    category: str,
+    by: str,
+    title: str,
+    by_title: str | None = None,
+    dark: bool = False,
+    normalize: bool = False,
+    max_rows: int = 12,
+    max_groups: int = 8,
+):
+    """Encounters per ``category``, stacked by ``by``: outcome by sex, outcome per site.
+
+    ``normalize`` shows each category's composition as shares instead of counts, so groups of
+    different size compare. Both columns are static attributes.
+    """
+    t = theme(dark)
+    df = (
+        frame.select(
+            pl.col(category).cast(pl.String()).fill_null("(missing)").alias("category"),
+            pl.col(by).cast(pl.String()).fill_null("(missing)").alias("group"),
+        )
+        .group_by("category", "group")
+        .agg(pl.len().alias("n"))
+    )
+    cats = (
+        df.group_by("category")
+        .agg(pl.col("n").sum().alias("total"))
+        .sort(["total", "category"], descending=[True, False])
+        .head(max_rows)
+        .get_column("category")
+        .to_list()
+    )
+    groups = (
+        df.group_by("group")
+        .agg(pl.col("n").sum().alias("total"))
+        .sort(["total", "group"], descending=[True, False])
+        .head(max_groups)
+        .get_column("group")
+        .to_list()
+    )
+    df = df.filter(pl.col("category").is_in(cats) & pl.col("group").is_in(groups)).with_columns(
+        (pl.col("n") / pl.col("n").sum().over("category")).alias("share")
+    )
+    if df.is_empty():
+        return None
+    value = "share:Q" if normalize else "n:Q"
+    chart = (
+        alt.Chart(df.to_pandas())
+        .mark_bar(cornerRadiusEnd=2, height={"band": 0.7})
+        .encode(
+            y=alt.Y("category:N", sort=cats, title=title, axis=alt.Axis(labelLimit=180)),
+            x=alt.X(
+                value,
+                title="Share of encounters" if normalize else "Encounters",
+                axis=alt.Axis(format=".0%" if normalize else ",.0f", grid=True),
+                stack=True,
+            ),
+            color=alt.Color(
+                "group:N",
+                scale=alt.Scale(domain=groups, range=_cycle(t.series, len(groups))),
+                title=by_title or by,
+                legend=alt.Legend(orient="top", direction="horizontal", columns=4),
+            ),
+            tooltip=[
+                alt.Tooltip("category:N", title=title),
+                alt.Tooltip("group:N", title=by_title or by),
+                alt.Tooltip("n:Q", title="Encounters", format=",.0f"),
+                alt.Tooltip("share:Q", title="Share", format=".0%"),
+            ],
+        )
+        .properties(height=max(110, 30 * len(cats) + 30))
+    )
+    return _apply(chart, t)
 
 
 def group_boxplot(

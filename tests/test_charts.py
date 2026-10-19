@@ -169,3 +169,16 @@ def test_interventions_rail_ranks_kinds_by_hours_covered(cohort: Cohort) -> None
     rail = spec["vconcat"][0]
     assert "by time covered" in rail["title"]["text"]
     assert rail["encoding"]["color"]["scale"]["domain"][0] == "Invasive Ventilation"
+
+
+def test_stacked_counts_and_colorful_bars(cohort: Cohort) -> None:
+    static = cohort.static
+    cols = [c for c in static.columns if c != "encounter_id"]
+    spec = _ok(charts.stacked_counts(static, cols[0], cols[1], "A", by_title="B", normalize=True))
+    assert spec["encoding"]["x"]["stack"] is True and spec["encoding"]["x"]["field"] == "share"
+    assert spec["encoding"]["color"]["scale"]["range"]
+    plain = _ok(charts.category_counts(static[cols[0]], "A"))
+    colored = _ok(charts.category_counts(static[cols[0]], "A", colorful=True))
+    assert (
+        "color" not in plain["layer"][0]["encoding"] and "color" in colored["layer"][0]["encoding"]
+    )

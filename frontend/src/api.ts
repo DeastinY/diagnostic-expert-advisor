@@ -1,3 +1,4 @@
+import { currentTheme } from "./theme";
 // Thin typed client for the DEA backend. Filters travel as repeated `where` params.
 export type Where = string[];
 
@@ -110,7 +111,13 @@ export function qs(params: Record<string, string | number | boolean | undefined 
   return s ? `?${s}` : "";
 }
 
-export const isDark = () => typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+export const isDark = () => currentTheme() === "dark";
+
+export interface PanelParamDef { name: string; type: "variable" | "static" | "static_categorical" | "every" | "number" | "bool"; required?: boolean; default?: unknown }
+export interface PanelDef { kind: string; label: string; description: string; params: PanelParamDef[]; size: number }
+export interface Panel { id: string; kind: string; params: Record<string, unknown>; size: number; title?: string | null }
+export interface DashboardData { panels: Panel[]; default: boolean; catalog: PanelDef[] }
+export interface PanelChart { spec: object | null; note: string | null }
 
 export interface Health {
   status: string; data_dir: string; auth: boolean; version: string;
@@ -144,6 +151,11 @@ export const api = {
   applyChecks: (name: string, ids: string[]) =>
     request<{ applied: string[] }>(`/api/cohorts/${name}/checks/apply`, { method: "POST", body: JSON.stringify({ ids }) }),
   cohorts: () => request<CohortInfo[]>("/api/cohorts"),
+  dashboard: (name: string) => request<DashboardData>(`/api/cohorts/${name}/dashboard`),
+  setDashboard: (name: string, panels: Panel[]) =>
+    request<{ panels: Panel[]; default: boolean }>(`/api/cohorts/${name}/dashboard`, { method: "PUT", body: JSON.stringify({ panels }) }),
+  panel: (name: string, kind: string, params: Record<string, unknown>, where: Where = []) =>
+    request<PanelChart>(`/api/cohorts/${name}/panel${qs({ kind, params: JSON.stringify(params), dark: isDark() }, where)}`),
   cohort: (name: string, where: Where = []) => request<CohortDetail>(`/api/cohorts/${name}${qs({}, where)}`),
   deleteCohort: (name: string) => request<void>(`/api/cohorts/${name}`, { method: "DELETE" }),
   demo: (body: { name: string; n: number; mimic: boolean; sites?: number }) =>

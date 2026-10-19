@@ -946,7 +946,11 @@ class Cohort:
         to split the cohort by.
         """
         step = duration_seconds(every)
-        lf = self.dynamic.filter(pl.col(VARIABLE) == variable)
+        # from admission on: the pre-admission run-up (emergency department labs) would
+        # otherwise stretch every trajectory to the left
+        lf = self.dynamic.filter(
+            (pl.col(VARIABLE) == variable) & (pl.col(TIME) >= pl.duration(seconds=0))
+        )
         if max_hours is not None:
             lf = lf.filter(pl.col(TIME) <= pl.duration(hours=max_hours))
         cell = ((pl.col(TIME).dt.total_seconds() // step) * step / 3600.0).alias("hours")

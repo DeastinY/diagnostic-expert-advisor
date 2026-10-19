@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+Overview as a dashboard
+- The overview is a four-column grid of plots the user composes: "Add plot" opens a catalogue
+  with search over kinds, variables and static columns; every panel has its parameters inline,
+  four widths, drag or arrow reordering, a rename on double-click and a remove. The layout is
+  saved with the cohort; "Reset to default" brings DEA's back.
+- DEA's default: the numbers, length of stay next to tags, the coverage heatmap, age, sex,
+  outcome by sex, outcome per site, and the trajectory of the main variable. Trajectories,
+  per-site distributions and coverage, variable distributions, the most observed variables
+  and the selection-versus-rest comparison are in the catalogue instead of on the page.
+- A light/dark toggle sits top right and sticks; charts redraw in the chosen theme.
+- Categorical bars (tags, static attributes, most observed) use the whole series palette;
+  crosstabs stack one attribute by another as counts or shares.
+- Export Parquet, export FHIR and the report moved from the overview to Build cohort.
+- Right after an import, the cohorts page shows the new cohort in numbers: stays, most
+  observed variables, age, sex, outcome, unit, the distributions of the 24 most observed
+  variables and the coverage heatmap, with buttons to the overview and the findings.
+- Trajectories start at admission; a site column has to be categorical to be used as one.
+
 Overview
 - The length-of-stay histogram counts whole days, the tags card shows the eight most frequent
   tags so it stays the height of the histogram, the KPI tiles spread across the card, and the

@@ -1,3 +1,4 @@
+import { useTheme } from "../theme";
 import { useEffect, useState, type ReactNode } from "react";
 
 export function Kpi({ label, value, delta }: { label: string; value: ReactNode; delta?: ReactNode }) {
@@ -80,6 +81,7 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): { data: T | 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
+  const theme = useTheme(); // charts carry the theme in their spec: fetch again on toggle
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -88,6 +90,6 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): { data: T | 
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, tick]);
+  }, [...deps, tick, theme]);
   return { data, error, loading, reload: () => setTick((t) => t + 1) };
 }

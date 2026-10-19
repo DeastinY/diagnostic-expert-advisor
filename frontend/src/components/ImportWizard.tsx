@@ -118,7 +118,7 @@ export function nameFromPath(p: string): string {
   return /[A-Za-z]/.test(parent) ? parent : last;
 }
 
-export function ImportWizard({ onDone, onMore, onImported, dropped }: { onDone: (name: string, where: "overview" | "profile") => void; onMore?: () => void; onImported?: () => void; dropped?: Picked[] | null }) {
+export function ImportWizard({ onDone, onMore, onImported, dropped }: { onDone: (name: string, where: "overview" | "profile") => void; onMore?: () => void; onImported?: (name: string) => void; dropped?: Picked[] | null }) {
   const [step, setStep] = useState(0);
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
@@ -262,7 +262,7 @@ export function ImportWizard({ onDone, onMore, onImported, dropped }: { onDone: 
       }
       setResult({ name: r.name, report: r.report, applied: sugg });
       setStep(3);
-      onImported?.(); // the cohort list beside the wizard shows the new cohort at once
+      onImported?.(r.name); // the cohort list and the summary below show the new cohort at once
       toast(`Imported ${r.report.n_encounters} encounters`);
     } catch (e) { fail(e); } finally { setBusy(null); setStage(null); }
   };

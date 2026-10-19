@@ -69,7 +69,26 @@ export function Builder() {
           </div>
         </Card>
       </div>
+      <ExportCard />
     </>
+  );
+}
+
+
+/** Downloads of the current selection; they used to crowd the overview's top bar. */
+function ExportCard() {
+  const { name, detail, where } = useCohort();
+  if (!detail) return null;
+  const cfg = detail.config;
+  return (
+    <Card title="Export and report">
+      <p className="muted small">The current selection as a wide Parquet table on the processing grid, as FHIR R4 NDJSON, or as a one-page HTML report.</p>
+      <div className="row">
+        <a className="btn sm" href={api.exportUrl(name, where, cfg.processing.resample_every ?? "1h", cfg.processing.fill)}>Export Parquet</a>
+        <a className="btn sm" href={api.fhirExportUrl(name, where)}>Export FHIR</a>
+        <a className="btn sm" href={api.reportUrl(name, where)} target="_blank" rel="noreferrer">Report</a>
+      </div>
+    </Card>
   );
 }
 
