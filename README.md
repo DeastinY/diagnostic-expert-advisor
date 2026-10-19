@@ -6,25 +6,24 @@
 
 **Project page:** https://deastiny.github.io/diagnostic-expert-advisor/
 
-The DEA is a lightweight toolkit for working with clinical time series. You point it at a data
-export, a MIMIC-IV folder or FHIR resources, it figures out the layout, checks the data for the
-usual problems and gives you plots for the whole cohort, every hospital and every patient. Most
-of this happens in the browser. If you prefer scripts, the same steps are available on the
-command line and in Python.
+The DEA is the fastest way to get a look at your data. It works as a platform for researchers and 
+clinicians alike, enabling easy data ingestion, fast visualization, and efficient computation.  
+It is built as a toolkit to enable consistent and reliable workflows for new data, while tackling 
+recurring issues in scale and integrating with HPC. Some features to note are:
 
-- **Import through the UI.** CSV and Parquet tables (long or wide), MIMIC-IV folders, FHIR R4
-  bundles and the v1 CSV tree are recognized, including which column is what and the units.
-- **Checks run on their own.** Mixed units, values out of range, duplicates, numbers stored as
+- **Guided Data Import:** Just throw in your folder of csv files, read FHIR resources, or parquet files. 
+  Data is conveniently imported, harmonized, and efficiently stored.
+- **Automated Checks:** Mixed units, values out of range, duplicates, numbers stored as
   text, timestamps before admission and differences between hospitals are reported before
-  anything is written. The fixes DEA is sure about are ticked, you can apply them and check
-  again, and every fix is stored with the cohort.
-- **Plots without plotting.** Cohort overview, per-hospital comparison, one page per patient
-  with the cohort median and IQR behind each signal, data-quality profile, HTML report.
-- **Harmonization.** Variables get LOINC and UCUM codes, diagnoses are grouped across ICD-9 and
-  ICD-10, drugs get RxNorm and ATC. Local naming goes into a mapping file.
-- **Datasets for models.** One call gives an encounter-level `(X, y)` with a prediction cutoff,
-  a leakage guard and a split by encounter, patient or whole hospital.
-- **Optional AI advisor** on any OpenAI-compatible endpoint. It only ever sees aggregates.
+  anything is written. Automatic fixes are available for many issues, everything is transparently audited.
+- **Plots without plotting:** With a focus on clinical timeseries data there are a few assumptions about 
+  interesting plots one can make. We offer a lot of out-of-the-box visualizations without even touching code.
+- **Harmonization across Standards:** Support for variable mapping to LOINC and UCUM codes, diagnoses are grouped across ICD-9 and
+  ICD-10, drugs get RxNorm and ATC. Local naming goes into a mapping file. Everything reproducible and explainable.
+- **Datasets for research:** Easily access data in a machine learning friendly `(X, y)` representation. Including prediction cutoffs,
+  leakage guards and a splitting by encounter, patient or whole hospital. Build subcohorts and keep track of your experiments.
+- **Optional AI advisor** on any OpenAI-compatible endpoint and MCP for attaching local AI to the DEA. The sky is the limit and 
+  future will show what is possible with this.
 
 Everything runs locally on Polars and Parquet. A MIMIC-sized cohort fits on a laptop.
 
