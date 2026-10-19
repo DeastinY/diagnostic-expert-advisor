@@ -154,6 +154,7 @@ function ProcessingEditor() {
   const [agg, setAgg] = useState(proc.aggregate);
   const [fill, setFill] = useState(proc.fill);
   const [drops, setDrops] = useState<string[]>(proc.drop_variables);
+  const [lead, setLead] = useState<string>(String(proc.pre_admission_lead_hours ?? 24));
   return (
     <div className="stack" style={{ gap: 10 }}>
       <p className="muted small">How observations become a regular wide frame for charts, exports and <code>cohort.wide()</code>.</p>
@@ -162,10 +163,16 @@ function ProcessingEditor() {
         <label className="field">Aggregate<select value={agg} onChange={(e) => setAgg(e.target.value)}>{["mean", "median", "first", "last", "min", "max"].map((a) => <option key={a}>{a}</option>)}</select></label>
         <label className="field">Fill gaps<select value={fill} onChange={(e) => setFill(e.target.value)}>{["none", "forward", "interpolate", "zero"].map((a) => <option key={a}>{a}</option>)}</select></label>
       </div>
+      <div className="grid c3">
+        <label className="field">Run-up before admission (hours)
+          <input type="number" min={0} step={1} value={lead} onChange={(e) => setLead(e.target.value)} />
+          <span className="small muted">Data up to this long before the admission time belongs to the stay (emergency department labs). Anything earlier is flagged as a foreign record; the findings on this page use the window.</span>
+        </label>
+      </div>
       <div className="row"><span className="small muted">Drop:</span>{detail!.variables.map((v) => <span key={v} className={`chip${drops.includes(v) ? " warn" : ""}`} style={{ cursor: "pointer" }} onClick={() => setDrops(drops.includes(v) ? drops.filter((x) => x !== v) : [...drops, v])}>{v}</span>)}</div>
       {Object.keys(proc.fill_overrides).length > 0 && <div className="small muted">Per-variable fills: {Object.entries(proc.fill_overrides).map(([k, v]) => `${k} → ${v}`).join(", ")}</div>}
       <div><button className="primary" onClick={async () => {
-        try { await api.processing(name, { resample_every: every || null, aggregate: agg, fill, drop_variables: drops }); toast("Processing settings saved"); reload(); }
+        try { await api.processing(name, { resample_every: every || null, aggregate: agg, fill, drop_variables: drops, pre_admission_lead_hours: lead === "" ? undefined : Number(lead) }); toast("Processing settings saved"); reload(); }
         catch (e) { toast((e as Error).message); }
       }}>Save</button></div>
     </div>

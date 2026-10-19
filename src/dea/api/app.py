@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from dea import __version__
 from dea.core import Cohort, Encounter, FilterError, Rule
 from dea.core.config import ProcessingConfig
-from dea.core.model import TIME, VARIABLE, collect
+from dea.core.model import ENCOUNTER_ID, TIME, VARIABLE, collect
 from dea.core.time import format_duration
 from dea.io import (
     delete_cohort,
@@ -208,6 +208,7 @@ class ProcessingIn(BaseModel):
     fill: str = "none"
     drop_variables: list[str] = Field(default_factory=list)
     fill_overrides: dict[str, str] | None = None
+    pre_admission_lead_hours: float | None = None  # None keeps the current window
 
 
 class ApplyIn(BaseModel):
@@ -335,6 +336,13 @@ PANEL_CATALOG: list[dict[str, Any]] = [
         "size": 4,
     },
     {
+        "kind": "pre_admission",
+        "label": "Before admission",
+        "description": "How much data precedes the admission time, per hour before it",
+        "params": [{"name": "max_hours", "type": "number", "default": 48}],
+        "size": 2,
+    },
+    {
         "kind": "selection",
         "label": "Selection versus the rest",
         "description": "The selected encounters against everyone else, on shared bins",
@@ -392,6 +400,12 @@ def _default_dashboard(cohort: Cohort) -> list[dict[str, Any]]:
         else {"kind": "observations", "params": {"n": 8}, "size": 2}
     )
     panels.append({"kind": "coverage", "params": {"max_hours": 168, "variables": 40}, "size": 4})
+    feats = cohort.features()
+    if (
+        "pre_admission_hours" in feats.columns
+        and float(feats["pre_admission_hours"].max() or 0) > 0
+    ):
+        panels.append({"kind": "pre_admission", "params": {"max_hours": 48}, "size": 2})
     if age:
         panels.append({"kind": "static", "params": {"column": age}, "size": 2})
     if sex:
@@ -594,6 +608,39 @@ def _panel(
             dark=dark,
         )
         out["spec"] = gallery.to_dict() if gallery is not None else None
+    elif kind == "pre_admission":
+        max_hours = float(opts.get("max_hours") or 48)
+        neg = collect(
+            cohort.dynamic.filter(pl.col(TIME) < pl.duration(seconds=0)).select(
+                ENCOUNTER_ID, (-pl.col(TIME).dt.total_seconds() / 3600.0).alias("before")
+            )
+        )
+        total = int(collect(cohort.dynamic.select(pl.len())).item())
+        if neg.is_empty() or not total:
+            out["note"] = "No observations before admission."
+            return out
+        shown = neg.filter(pl.col("before") <= max_hours)
+        if shown.height:
+            out["spec"] = charts.histogram(
+                shown["before"],
+                "Hours before admission",
+                "h",
+                dark=dark,
+                integer=True,
+                median=False,
+                count_title="Observations",
+            ).to_dict()
+        stays = neg.get_column(ENCOUNTER_ID).n_unique()
+        note = (
+            f"{neg.height:,} observations ({neg.height / total:.1%}) in {stays:,} of "
+            f"{len(cohort):,} encounters lie before admission; the earliest "
+            f"{float(neg['before'].max()):,.0f} h before"
+        )
+        if shown.height < neg.height:
+            note += (
+                f"; {neg.height - shown.height:,} further back than {max_hours:g} h are not drawn"
+            )
+        out["note"] = note + "."
     elif kind == "selection":
         if len(cohort) >= len(full):
             out["note"] = "Select some encounters with a filter to compare them with the rest."
@@ -1161,6 +1208,11 @@ def create_app(
             fill=body.fill,
             fill_overrides=cohort.config.processing.fill_overrides,
             drop_variables=body.drop_variables,
+            pre_admission_lead_hours=(
+                body.pre_admission_lead_hours
+                if body.pre_admission_lead_hours is not None
+                else cohort.config.processing.pre_admission_lead_hours
+            ),
         )
         cohort.config.save(cohort.root / "cohort.yaml")
         store.invalidate(name)

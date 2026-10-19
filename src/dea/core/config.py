@@ -58,6 +58,12 @@ class ProcessingConfig(BaseModel):
     fill: FillStrategy = "none"
     fill_overrides: dict[str, FillStrategy] = Field(default_factory=dict)
     drop_variables: list[str] = Field(default_factory=list)
+    pre_admission_lead_hours: float = Field(
+        default=24,
+        ge=0,
+        description="Run-up before the admission time that still belongs to the stay (labs "
+        "drawn in the emergency department); records further back are flagged as foreign",
+    )
 
     def fill_for(self, variable: str) -> FillStrategy:
         return self.fill_overrides.get(variable, self.fill)

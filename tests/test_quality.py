@@ -337,3 +337,39 @@ def test_choose_keeps_the_choice_in_the_id() -> None:
     assert [c.id for c in choose(checks, "recommended")] == [
         c.id for c in checks if c.action and c.recommended
     ]
+
+
+def test_run_up_can_be_kept_dropped_or_clamped(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from dea.quality.checks import choose
+
+    cohort = _cohort_with_lead(tmp_path)
+    checks = run_checks(cohort)
+    shortly = next(c for c in checks if c.id == "time:negative")
+    assert [o["id"] for o in shortly.options] == ["drop", "clamp"]
+    assert "run-up" in shortly.detail and "Processing" in shortly.detail
+    feats = cohort.features()
+    assert {"pre_admission_hours", "n_pre_admission"} <= set(feats.columns)
+    assert feats["pre_admission_hours"].max() == 400 and feats["n_pre_admission"].sum() == 13
+
+    clamped = apply_suggestions(cohort, choose(checks, ["time:early", "time:negative#clamp"]))
+    times = clamped.dynamic.select(pl.col("time").min()).collect().item()
+    assert times == timedelta(0)  # the run-up sits on hour 0, the far-back rows are gone
+    n_zero = (
+        clamped.dynamic.filter(pl.col("time") == timedelta(0)).select(pl.len()).collect().item()
+    )
+    assert n_zero >= 8
+    assert [f.expr for f in clamped.config.value_fixes][-1] == "time = 0"
+    assert clamped.features(refresh=True)["n_pre_admission"].sum() == 0
+
+    # a wider window makes the far-back rows part of the run-up
+    wide = Cohort(
+        cohort.static,
+        cohort.dynamic,
+        events=cohort.events,
+        config=cohort.config.model_copy(deep=True),
+    )
+    wide.config.processing.pre_admission_lead_hours = 500
+    ids = {c.id for c in run_checks(wide)}
+    assert "time:early" not in ids and "time:negative" in ids

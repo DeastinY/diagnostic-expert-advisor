@@ -20,8 +20,8 @@ provenance of every stored value stays visible.
 | range | values outside the plausible range of a dictionary concept; when a known conversion moves the median outlier into range the finding names the unit (e.g. "1.2% of 'Temp' look like [degF]") | warning | convert, or drop the implausible rows |
 | cluster | two separated value clusters in a variable the dictionary does not know (a unit mix, two devices, two measurements under one name) | warning | none, rename or split manually |
 | duplicates | the same encounter, time and variable recorded more than once | warning | keep the first |
-| time | observations more than 24 h before admission (an earlier admission's weight, a previous stay's alarm limits) | warning | drop them (recommended) |
-| time | observations in the 24 h before admission (emergency department labs: expected and kept), or more than 90 days after it | info / warning | drop the run-up if your question starts at admission |
+| time | observations further back than the run-up window before admission (an earlier admission's weight, a previous stay's alarm limits) | warning | drop them (recommended) |
+| time | observations in the run-up window before admission (emergency department labs: expected and kept at negative hours), or more than 90 days after it | info / warning | drop the run-up, or count it as admission values (hour 0) |
 | encounters | encounters without any observation | warning | filter "Has observations" |
 | static | columns missing for more than 30% of encounters, ages above 120 | info / warning | none |
 | events | string variables that are really numbers with a unit glued on ("37.2 C") | warning | clean the source |
@@ -178,3 +178,24 @@ not for a national registry. SNOMED CT, RxNorm/ATC for medications and the OMOP 
 model are the natural next steps; the dictionary already reserves `rxnorm`/`atc` fields for
 drugs, and an OMOP reader would map `measurement` and `condition_occurrence` through the same
 two modules.
+
+## Data before admission
+
+Timestamps before the admission time are kept as negative hours. A short run-up is normal in
+ICU data: the labs drawn in the emergency department and the weight taken on the ward belong to
+the stay. How long that run-up may be is a setting of the cohort, `processing.pre_admission_lead_hours`
+(24 by default, editable under Processing on the profile page), and the checks use it:
+
+- Rows further back than the window are flagged as records of another stay or a wrong
+  admission time, with a recommended fix that drops them (`dea.Cohort.drop_before_admission`).
+- Rows inside the window are reported as information. They can be left as they are, dropped
+  (the stay starts exactly at admission), or moved to hour 0 so that the emergency department
+  lactate counts as the admission value (`dea.Cohort.clamp_to_admission`). A variable measured
+  twice in the run-up then lands twice on hour 0, which the duplicate check reports.
+
+What is kept at negative hours is visible everywhere: the patient page shades the time before
+admission, the overview's "Before admission" panel shows how much data precedes admission and
+how far back it reaches, and every encounter carries `pre_admission_hours` and `n_pre_admission`
+in its features, so a filter such as `pre_admission_hours > 6` selects the stays with a long
+run-up. Trajectories and the coverage heatmap start at admission.
+

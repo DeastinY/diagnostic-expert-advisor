@@ -182,3 +182,10 @@ def test_stacked_counts_and_colorful_bars(cohort: Cohort) -> None:
     assert (
         "color" not in plain["layer"][0]["encoding"] and "color" in colored["layer"][0]["encoding"]
     )
+
+
+def test_small_multiples_tolerates_a_variable_listed_twice(cohort: Cohort) -> None:
+    enc = cohort.get(cohort.encounter_ids[0])
+    spec = _ok(charts.small_multiples(enc, ["HR", "MAP", "HR"], "1h"))
+    titles = [p.get("title", {}).get("text") for p in spec["vconcat"] if "title" in p]
+    assert sum(1 for t in titles if t and t.startswith("HR")) == 1

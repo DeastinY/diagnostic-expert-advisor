@@ -59,6 +59,14 @@ INTERVAL_SCHEMA: dict[str, pl.DataType] = {
 }
 
 FEATURE_AGGS = ("min", "max", "mean", "first", "last", "count")
+# stay statistics every feature table carries; a cached table missing one is recomputed
+FEATURE_STAY_COLUMNS = (
+    "los_hours",
+    "n_observations",
+    "n_variables",
+    "pre_admission_hours",
+    "n_pre_admission",
+)
 _HOURS_REF = re.compile(r'"([^"]+__hours)"')
 FEATURE_VARIABLE_LIMIT = 200
 
@@ -476,8 +484,11 @@ class Cohort:
             return self._features
         cache = self._features_cache()
         if cache and cache.exists() and not refresh and self._full:
-            self._features = pl.read_parquet(cache)
-            return self._features
+            cached = pl.read_parquet(cache)
+            # a table written by an older DEA lacks newer columns: compute it again
+            if set(FEATURE_STAY_COLUMNS) <= set(cached.columns):
+                self._features = cached
+                return self._features
         self._features = self._compute_features()
         if cache and self._full:
             cache.parent.mkdir(parents=True, exist_ok=True)
@@ -489,6 +500,11 @@ class Cohort:
             (pl.col(TIME).max().dt.total_seconds() / 3600.0).alias("los_hours"),
             pl.len().alias("n_observations"),
             pl.col(VARIABLE).n_unique().alias("n_variables"),
+            # how far before admission the data reaches, and how much of it lies there
+            (-(pl.col(TIME).min().dt.total_seconds()) / 3600.0)
+            .clip(0)
+            .alias("pre_admission_hours"),
+            (pl.col(TIME) < pl.duration(seconds=0)).sum().alias("n_pre_admission"),
         )
         selected = self.feature_variables()
         per_var = collect(
@@ -540,6 +556,8 @@ class Cohort:
             .join(wide_vars, on=ENCOUNTER_ID, how="left")
             .with_columns(
                 pl.col("los_hours").fill_null(0.0),
+                pl.col("pre_admission_hours").fill_null(0.0),
+                pl.col("n_pre_admission").fill_null(0),
                 pl.col("n_observations").fill_null(0),
                 pl.col("n_variables").fill_null(0),
             )
@@ -699,6 +717,36 @@ class Cohort:
             events=pl.concat(
                 [self.events.filter(~hit), rows.filter(pl.col("_num").is_null()).drop("_num")]
             ),
+            intervals=self.intervals,
+            config=config,
+            root=self.root,
+            _full=self._full,
+        )
+
+    def clamp_to_admission(self, lead_hours: float = 24) -> Cohort:
+        """Move the run-up, rows up to ``lead_hours`` before admission, to hour 0.
+
+        A lab drawn in the emergency department then counts as the admission value, and
+        features, trajectories and coverage, which start at admission, see it. A variable
+        measured twice in the run-up lands twice on hour 0 (the duplicate check reports
+        that). Rows further back are left alone; see :meth:`drop_before_admission`.
+        """
+        zero = pl.duration(seconds=0)
+        run_up = (pl.col(TIME) < zero) & (pl.col(TIME) >= pl.duration(hours=-lead_hours))
+        shift = pl.when(run_up).then(zero).otherwise(pl.col(TIME)).alias(TIME)
+        config = self.config.model_copy(deep=True)
+        config.value_fixes.append(
+            ValueFix(
+                variable="*",
+                where=f"-{lead_hours:g}h <= time < 0",
+                expr="time = 0",
+                description=f"run-up of {lead_hours:g} h before admission moved to hour 0",
+            )
+        )
+        return Cohort(
+            self.static,
+            self.dynamic.with_columns(shift),
+            events=self.events.with_columns(shift),
             intervals=self.intervals,
             config=config,
             root=self.root,

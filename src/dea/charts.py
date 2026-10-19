@@ -155,6 +155,7 @@ def histogram(
     dark: bool = False,
     median: bool = True,
     integer: bool = False,
+    count_title: str = "Encounters",
 ):
     """Single-hue histogram with rounded bar tops, a surface gap and a median marker.
 
@@ -180,10 +181,10 @@ def histogram(
         color=t.accent, cornerRadiusTopLeft=3, cornerRadiusTopRight=3, binSpacing=2
     ).encode(
         x=alt.X("x:Q", bin=bin_spec, title=label, axis=x_axis),
-        y=alt.Y("count():Q", title="Encounters", axis=alt.Axis(tickMinStep=1)),
+        y=alt.Y("count():Q", title=count_title, axis=alt.Axis(tickMinStep=1)),
         tooltip=[
             alt.Tooltip("x:Q", bin=True, title=label, format=tip_format),
-            alt.Tooltip("count():Q", title="Encounters"),
+            alt.Tooltip("count():Q", title=count_title),
         ],
     )
     layers = [bars]
@@ -735,7 +736,7 @@ def small_multiples(
     t = theme(dark)
     labels, units = labels or {}, units or {}
     wide = encounter.wide(every=every, variables=variables)
-    present = [v for v in variables if v in wide.columns]
+    present = [v for v in dict.fromkeys(variables) if v in wide.columns]  # once each, in order
     if not present:
         return None
     hours = (pl.col(TIME).dt.total_seconds() / 3600.0).alias("hours")
@@ -816,6 +817,15 @@ def small_multiples(
             )
         )
         panels.append(rail)
+    # data before admission sits on a shaded band, so the run-up is visible as such
+    earliest = float(df["hours"].min()) if len(df) else 0.0
+    pre = (
+        alt.Chart(pl.DataFrame({"x": [earliest], "x2": [0.0]}).to_pandas())
+        .mark_rect(color=t.muted, opacity=0.09)
+        .encode(x="x:Q", x2="x2:Q")
+        if earliest < 0
+        else None
+    )
     for i, v in enumerate(present):
         sub = df[df[VARIABLE] == v]
         base = alt.Chart(sub)
@@ -829,7 +839,15 @@ def small_multiples(
                 axis=alt.Axis(tickCount=3),
             ),
         )
-        layers = []
+        layers = [pre] if pre is not None else []
+        if pre is not None and i == 0:
+            layers.append(
+                alt.Chart(
+                    pl.DataFrame({"x": [earliest / 2], "t": ["before admission"]}).to_pandas()
+                )
+                .mark_text(fontSize=10, color=t.muted, baseline="top", dy=2)
+                .encode(x="x:Q", y=alt.value(0), text="t:N")
+            )
         band = (bands or {}).get(v)
         if band is not None and band.height:
             bdf = band.select("hours", "lo", "median", "hi").to_pandas()

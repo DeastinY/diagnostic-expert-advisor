@@ -573,11 +573,16 @@ def structural_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
     out = []
     n_enc = len(cohort)
     dyn = cohort.dynamic
+    lead = cohort.config.processing.pre_admission_lead_hours
     counts = collect(
         dyn.select(
             pl.len().alias("n"),
             (pl.col(TIME) < pl.duration(seconds=0)).sum().alias("negative"),
-            (pl.col(TIME) < pl.duration(hours=-EARLY_LEAD_HOURS)).sum().alias("early"),
+            (pl.col(TIME) < pl.duration(hours=-lead)).sum().alias("early"),
+            pl.col(ENCOUNTER_ID)
+            .filter(pl.col(TIME) < pl.duration(seconds=0))
+            .n_unique()
+            .alias("enc_negative"),
             pl.col(TIME).min().alias("earliest"),
             (pl.col(TIME) > pl.duration(days=90)).sum().alias("late"),
             pl.col(VALUE).is_nan().sum().alias("nan"),
@@ -590,16 +595,14 @@ def structural_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
             Check(
                 id="time:early",
                 severity="warning",
-                title=(
-                    f"{counts['early']:,} observation(s) more than {EARLY_LEAD_HOURS} h "
-                    "before admission"
-                ),
+                title=(f"{counts['early']:,} observation(s) more than {lead:g} h before admission"),
                 detail=(
                     f"The earliest is {earliest:,.0f} h before admission. Records that far back "
                     "are not part of this stay: a weight or height from an earlier hospital "
                     "admission, alarm limits of a previous ICU stay, or a wrong admission time. "
                     "They distort the first hours of every chart and feature, so dropping them "
-                    "is the safe default."
+                    f"is the safe default. The {lead:g} h run-up that counts as part of the "
+                    "stay can be changed under Processing."
                 ),
                 action={"drop_time": "early"},
                 n=int(counts["early"]),
@@ -608,15 +611,35 @@ def structural_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
         )
     shortly = int(counts["negative"] - counts["early"])
     if shortly:
+        options = [
+            {
+                "id": "drop",
+                "label": "drop them",
+                "detail": "the stay starts exactly at admission",
+                "action": {"drop_time": "negative"},
+            },
+            {
+                "id": "clamp",
+                "label": "count them as admission values",
+                "detail": "their time becomes hour 0, so features and trajectories see them",
+                "action": {"drop_time": "clamp"},
+            },
+        ]
         out.append(
             Check(
                 id="time:negative",
                 severity="info",
-                title=(f"{shortly:,} observation(s) in the {EARLY_LEAD_HOURS} h before admission"),
-                detail="A short run-up before the admission time is expected: labs drawn in "
-                "the emergency department belong to the stay and are kept by default. Drop "
-                "them only if your question starts exactly at admission.",
-                action={"drop_time": "negative"},
+                title=(f"{shortly:,} observation(s) in the {lead:g} h before admission"),
+                detail=(
+                    f"In {int(counts['enc_negative']):,} of {n_enc:,} encounters some data "
+                    "precedes the admission time: labs drawn in the emergency department, a "
+                    "weight taken on the ward. That run-up is expected and kept as it is, at "
+                    "negative hours, which charts that start at admission leave out. Drop it if "
+                    "your question starts exactly at admission, or count it as admission "
+                    f"values. The {lead:g} h window can be changed under Processing."
+                ),
+                action=options[0]["action"],
+                options=options,
                 n=shortly,
             )
         )

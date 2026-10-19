@@ -338,7 +338,7 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
     parse: list[str] = []
     unmap: list[str] = []
     dedupes: list[str] = []
-    drop_negative = drop_early = False
+    drop_negative = drop_early = clamp_run_up = False
     for s in suggestions:
         a = s.action or {}
         fixes += [a["fix"]] if "fix" in a else []
@@ -350,6 +350,7 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
                 dedupes.append(how)
         drop_negative = drop_negative or a.get("drop_time") == "negative"
         drop_early = drop_early or a.get("drop_time") == "early"
+        clamp_run_up = clamp_run_up or a.get("drop_time") == "clamp"
         parse += [a["parse"]["variable"]] if "parse" in a else []
         renames.update(a.get("rename", {}))
         labels.update(a.get("label", {}))
@@ -375,12 +376,13 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
         )
     for how in sorted(dedupes, key=lambda h: h != "exact"):  # exact repeats go first
         out = out.dedupe(how)
+    lead = cohort.config.processing.pre_admission_lead_hours
     if drop_negative:
         out = out.drop_before_admission()
     elif drop_early:
-        from dea.quality.checks import EARLY_LEAD_HOURS
-
-        out = out.drop_before_admission(lead_hours=EARLY_LEAD_HOURS)
+        out = out.drop_before_admission(lead_hours=lead)
+    if clamp_run_up and not drop_negative:
+        out = out.clamp_to_admission(lead_hours=lead)
     for v in parse:
         out = out.parse_numeric_events(v)
     out = out.move_to_static([v for v in to_static if v in cohort.variables])

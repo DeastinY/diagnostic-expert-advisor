@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+Data before admission
+- The run-up that still belongs to a stay is a cohort setting, `processing.pre_admission_lead_hours`
+  (24 by default, editable under Processing). The checks use it: records further back are
+  flagged with a drop fix; the run-up itself can be left alone, dropped, or counted as
+  admission values (`Cohort.clamp_to_admission` moves it to hour 0).
+- Every encounter carries `pre_admission_hours` and `n_pre_admission` in its features, so
+  rules can select stays with a long run-up; the patient page shades the time before
+  admission; a "Before admission" overview panel shows how much data precedes admission and
+  how far back it reaches, and is on by default when there is any.
+- A cached feature table from an older DEA is recomputed when it lacks newer columns; the
+  patient page no longer fails when a variable is listed twice for a panel.
+
 Overview as a dashboard
 - The overview is a four-column grid of plots the user composes: "Add plot" opens a catalogue
   with search over kinds, variables and static columns; every panel has its parameters inline,

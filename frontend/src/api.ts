@@ -12,6 +12,7 @@ export interface Rule { label: string; where: string; description: string }
 export interface Processing {
   resample_every: string | null; aggregate: string; fill: string;
   fill_overrides: Record<string, string>; drop_variables: string[];
+  pre_admission_lead_hours: number;
 }
 export interface CohortConfig {
   name: string; description: string; filters: Rule[]; tags: Rule[]; plots: string[];

@@ -473,3 +473,22 @@ def test_dashboard_is_saved_and_reset(client: TestClient) -> None:
     r = client.put("/api/cohorts/unit/dashboard", json={"panels": []})
     assert r.json()["default"] is True
     assert client.get("/api/cohorts/unit/dashboard").json()["default"] is True
+
+
+def test_pre_admission_window_and_panel(client: TestClient) -> None:
+    import json
+
+    r = client.put("/api/cohorts/unit/processing", json={"pre_admission_lead_hours": 12})
+    assert r.status_code == 200 and r.json()["pre_admission_lead_hours"] == 12
+    r = client.put("/api/cohorts/unit/processing", json={"aggregate": "median"})
+    assert r.json()["pre_admission_lead_hours"] == 12  # untouched when not sent
+    assert (
+        client.get("/api/cohorts/unit").json()["config"]["processing"]["pre_admission_lead_hours"]
+        == 12
+    )
+    r = client.get(
+        "/api/cohorts/unit/panel", params={"kind": "pre_admission", "params": json.dumps({})}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["spec"] is not None or body["note"]  # the synthetic cohort may start at admission
