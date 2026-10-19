@@ -381,3 +381,33 @@ def test_jobs_hist_previous_and_checks_apply(client, tmp_path):
     assert r.json()["applied"] == ["duplicates"]
     assert client.get("/api/cohorts/jobby/hist", params={"variable": "HR"}).json()["n"] == 40
     assert not any(c["id"] == "duplicates" for c in client.get("/api/cohorts/jobby/checks").json())
+
+
+def test_hist_before_after_and_series(client: TestClient) -> None:
+    variables = client.get("/api/cohorts/unit").json()["variables"]
+    v = "HR" if "HR" in variables else "heart_rate"  # an earlier test may have renamed it
+    base = client.get("/api/cohorts/unit/hist", params={"variable": v}).json()
+    assert "after" not in base and base["n"] > 0
+    h = client.get(
+        "/api/cohorts/unit/hist", params={"variable": v, "where": "value > 100", "expr": "100"}
+    ).json()
+    after = h["after"]
+    assert after["n"] == h["n"] and after["n_changed"] + after["n_unchanged"] == h["n"]
+    assert after["n_changed"] > 0 and len(after["bins"]) == len(h["bins"])
+    assert after["bins"][0]["lo"] <= after["bins"][-1]["hi"]  # its own window, 30 bins
+    assert len(after["bins"]) == 30
+    dropped = client.get(
+        "/api/cohorts/unit/hist", params={"variable": v, "where": "value > 100"}
+    ).json()
+    assert dropped["after"]["n"] == h["n"] - after["n_changed"]
+
+    encounters = client.get("/api/cohorts/unit/encounters").json()
+    rows = (
+        encounters
+        if isinstance(encounters, list)
+        else encounters.get("rows", encounters.get("encounters"))
+    )
+    eid = rows[0]["encounter_id"]
+    s = client.get("/api/cohorts/unit/series", params={"variable": v, "encounter": eid}).json()
+    assert s["encounter"] == eid and len(s["hours"]) == len(s["values"]) > 10
+    assert s["hours"] == sorted(s["hours"])

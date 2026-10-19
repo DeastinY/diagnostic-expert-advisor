@@ -86,7 +86,7 @@ def test_fixes_at_import(tmp_path: Path) -> None:
     assert hob.height == 30 and set(hob["value"].to_list()) == {30.0, 31.0, 32.0}
     assert "Head of Bed" not in cohort.event_variables
     assert [f.description for f in cohort.config.value_fixes] == [
-        "duplicate rows removed",
+        "exact duplicate rows removed",
         "rows more than 24 h before admission removed",
         "numbers parsed from text",
     ]

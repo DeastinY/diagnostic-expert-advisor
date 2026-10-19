@@ -741,13 +741,9 @@ def apply_import_fixes(
     import copy
 
     from dea.quality import run_checks
-    from dea.quality.checks import apply_checks
+    from dea.quality.checks import apply_checks, choose
 
-    if fixes == "recommended":
-        chosen = [c for c in report.checks if c.action and c.recommended]
-    else:
-        wanted = set(fixes)
-        chosen = [c for c in report.checks if c.action and c.id in wanted]
+    chosen = choose(report.checks, fixes)
     if not chosen:
         return cohort, report
     out = copy.copy(report)

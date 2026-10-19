@@ -735,15 +735,45 @@ class Cohort:
             _full=self._full,
         )
 
-    def dedupe(self) -> Cohort:
-        """Drop repeated (encounter, time, variable) observations, keeping the first."""
+    def dedupe(self, how: str = "first") -> Cohort:
+        """Resolve repeated (encounter, time, variable) observations.
+
+        ``exact`` drops only rows that repeat the value as well, and is always safe. For keys
+        recorded with *different* values, ``first`` and ``last`` keep that row, ``mean`` keeps
+        one averaged row and ``drop`` removes every row of such a key.
+        """
+        key = [ENCOUNTER_ID, TIME, VARIABLE]
+        dyn = self.dynamic
+        if how == "exact":
+            dynamic = dyn.unique(subset=[*key, VALUE], keep="first")
+        elif how in ("first", "last"):
+            dynamic = dyn.unique(subset=key, keep=how)
+        elif how == "mean":
+            dynamic = dyn.group_by(key).agg(pl.col(VALUE).mean()).select(list(LONG_SCHEMA))
+        elif how == "drop":
+            conflicts = (
+                dyn.group_by(key)
+                .agg(pl.col(VALUE).n_unique().alias("nv"))
+                .filter(pl.col("nv") > 1)
+                .select(key)
+            )
+            dynamic = dyn.join(conflicts, on=key, how="anti").unique(subset=key, keep="first")
+        else:
+            raise ValueError(f"unknown dedupe strategy {how!r}")
+        described = {
+            "exact": "exact duplicate rows removed",
+            "first": "conflicting values at one time: first kept",
+            "last": "conflicting values at one time: last kept",
+            "mean": "conflicting values at one time: mean kept",
+            "drop": "conflicting values at one time: all dropped",
+        }
         config = self.config.model_copy(deep=True)
         config.value_fixes.append(
-            ValueFix(variable="*", where="duplicate", description="duplicate rows removed")
+            ValueFix(variable="*", where=f"duplicate:{how}", description=described[how])
         )
         return Cohort(
             self.static,
-            self.dynamic.unique(subset=[ENCOUNTER_ID, TIME, VARIABLE], keep="first"),
+            dynamic,
             events=self.events,
             intervals=self.intervals,
             config=config,

@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from dea import __version__
 from dea.core import Cohort, Encounter, FilterError, Rule
 from dea.core.config import ProcessingConfig
-from dea.core.model import VARIABLE, collect
+from dea.core.model import TIME, VARIABLE, collect
 from dea.core.time import format_duration
 from dea.io import (
     delete_cohort,
@@ -177,6 +177,13 @@ class ImportIn(BaseModel):
 
 class HistIn(ImportIn):
     variable: str
+    where: str | None = None  # a fix's condition: the histogram then also shows the result
+    expr: str | None = None
+
+
+class SeriesIn(ImportIn):
+    variable: str
+    encounter: str
 
 
 class DemoIn(BaseModel):
@@ -499,8 +506,14 @@ def create_app(
             out["result"] = job["result"]
         return out
 
-    def _hist(cohort: Cohort, variable: str) -> dict[str, Any]:
-        """Bins of one variable plus the plausible range of its concept, for a small chart."""
+    def _hist(
+        cohort: Cohort, variable: str, where: str | None = None, expr: str | None = None
+    ) -> dict[str, Any]:
+        """Bins of one variable plus the plausible range of its concept, for a small chart.
+
+        With a fix (``where`` and ``expr``, as in a check's action) the result also holds the
+        bins *after* that fix on the same axis, and how many rows it changes.
+        """
         import numpy as np
 
         from dea.quality.checks import _concepts
@@ -515,20 +528,8 @@ def create_app(
         n = values.len()
         bins: list[dict[str, Any]] = []
         if n:
-            arr = values.to_numpy()
-            # the 0.5-99.5 percentile window, widened to the plausible range, so the outlier
-            # cluster that a finding is about stays in the picture
-            lo, hi = float(np.percentile(arr, 0.5)), float(np.percentile(arr, 99.5))
-            if c and c.range:
-                lo, hi = min(lo, float(c.range[0])), max(hi, float(c.range[1]))
-            if hi <= lo:
-                hi = lo + 1.0
-            counts, edges = np.histogram(np.clip(arr, lo, hi), bins=30, range=(lo, hi))
-            bins = [
-                {"lo": float(edges[i]), "hi": float(edges[i + 1]), "count": int(counts[i])}
-                for i in range(len(counts))
-            ]
-        return {
+            bins = _bins(np, values.to_numpy(), c)
+        out = {
             "variable": variable,
             "label": cohort.config.variable_labels.get(variable, variable),
             "unit": cohort.config.variable_units.get(variable, c.unit if c else ""),
@@ -537,22 +538,79 @@ def create_app(
             "range": list(c.range) if c and c.range else None,
             "concept": c.label if c else None,
         }
+        if where and n:
+            hit = values.to_frame("value").lazy().filter(pl.sql_expr(where)).collect().height
+            after = (
+                collect(
+                    cohort.fix_values(variable, where, expr)
+                    .dynamic.filter(pl.col(VARIABLE) == variable)
+                    .select(pl.col("value"))
+                )
+                .get_column("value")
+                .drop_nulls()
+                .drop_nans()
+            )
+            out["after"] = {  # on its own window: a unit conversion moves the whole picture
+                "bins": _bins(np, after.to_numpy(), c) if after.len() else [],
+                "n": int(after.len()),
+                "n_changed": int(hit),
+                "n_unchanged": int(n - hit),
+            }
+        return out
+
+    def _bins(np: Any, arr: Any, c: Any) -> list[dict[str, Any]]:
+        """30 bins over the 0.5-99.5 percentile window, widened to the concept's plausible
+        range so the outlier cluster a finding is about stays in the picture."""
+        lo, hi = float(np.percentile(arr, 0.5)), float(np.percentile(arr, 99.5))
+        if c and c.range:
+            lo, hi = min(lo, float(c.range[0])), max(hi, float(c.range[1]))
+        if hi <= lo:
+            hi = lo + 1.0
+        counts, edges = np.histogram(np.clip(arr, lo, hi), bins=30, range=(lo, hi))
+        return [
+            {"lo": float(edges[i]), "hi": float(edges[i + 1]), "count": int(counts[i])}
+            for i in range(len(counts))
+        ]
+
+    def _series(cohort: Cohort, variable: str, encounter: str) -> dict[str, Any]:
+        """One encounter's observations of one variable, for the per-value review."""
+        enc = cohort.get(encounter)
+        s = enc.series(variable).head(2000)
+        return {
+            "variable": variable,
+            "encounter": encounter,
+            "unit": cohort.config.variable_units.get(variable, ""),
+            "hours": [round(t.total_seconds() / 3600, 3) for t in s.get_column(TIME)],
+            "values": [float(v) if v is not None else None for v in s.get_column("value")],
+        }
 
     @app.post("/api/cohorts/preview/hist")
     def preview_hist(body: HistIn) -> dict[str, Any]:
-        cohort, _ = _import(ImportIn(**body.model_dump(exclude={"variable"})))
-        return _hist(cohort, body.variable)
+        cohort, _ = _import(ImportIn(**body.model_dump(exclude={"variable", "where", "expr"})))
+        return _hist(cohort, body.variable, body.where, body.expr)
 
     @app.get("/api/cohorts/{name}/hist")
-    def cohort_hist(name: str, variable: str) -> dict[str, Any]:
-        return _hist(store.get(name), variable)
+    def cohort_hist(
+        name: str, variable: str, where: str | None = None, expr: str | None = None
+    ) -> dict[str, Any]:
+        return _hist(store.get(name), variable, where, expr)
+
+    @app.post("/api/cohorts/preview/series")
+    def preview_series(body: SeriesIn) -> dict[str, Any]:
+        cohort, _ = _import(ImportIn(**body.model_dump(exclude={"variable", "encounter"})))
+        return _series(cohort, body.variable, body.encounter)
+
+    @app.get("/api/cohorts/{name}/series")
+    def cohort_series(name: str, variable: str, encounter: str) -> dict[str, Any]:
+        return _series(store.get(name), variable, encounter)
 
     @app.post("/api/cohorts/{name}/checks/apply")
     def checks_apply(name: str, body: ApplyIn) -> dict[str, Any]:
         from dea.quality import apply_checks, run_checks
+        from dea.quality.checks import choose
 
         cohort = store.get(name)
-        chosen = [c for c in run_checks(cohort) if c.action and c.id in set(body.ids)]
+        chosen = choose(run_checks(cohort), body.ids)
         if chosen:
             apply_checks(cohort, chosen).save()
             store.invalidate(name)

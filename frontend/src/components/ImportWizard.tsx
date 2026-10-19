@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { api, type Detection, type Hist, type ImportBody, type ImportReport, type Previous } from "../api";
-import { Findings, Verdict, num } from "./Findings";
+import { api, type Detection, type ImportBody, type ImportReport, type Previous } from "../api";
+import { Findings, Verdict, entryFor, num, withChoice, type FixLoader, type SeriesLoader } from "./Findings";
 import { Alert, Spinner, toast } from "./ui";
 
 /** A file picked from a drop or a folder chooser, with its path relative to what was dropped. */
@@ -69,7 +69,7 @@ function Tiles({ r }: { r: ImportReport }) {
   return <div className="tiles">{items.map(([v, l], i) => <div key={l} className={`tile rise d${i + 1}`}><b>{num(v)}</b><span>{l}</span></div>)}</div>;
 }
 
-function Review({ report, previous, selected, onToggle, busy, loadHist }: { report: ImportReport; previous: Previous | null; selected: Set<string>; onToggle: (id: string, on: boolean) => void; busy: boolean; loadHist: (variable: string) => Promise<Hist> }) {
+function Review({ report, previous, selected, onChoose, busy, loadHist, loadSeries }: { report: ImportReport; previous: Previous | null; selected: Set<string>; onChoose: (id: string, entry: string | null) => void; busy: boolean; loadHist: FixLoader; loadSeries: SeriesLoader }) {
   const fixable = report.checks.filter((c) => c.action);
   const s = report.summary;
   const delta = previous && previous.n_observations != null ? report.n_observations - previous.n_observations : null;
@@ -91,7 +91,7 @@ function Review({ report, previous, selected, onToggle, busy, loadHist }: { repo
       )}
       {report.applied.length > 0 && <div className="applied rise">✓ {report.applied.length} fix{report.applied.length === 1 ? "" : "es"} applied. What is listed below is what remains.</div>}
       {report.warnings.map((w) => <Alert key={w}>{w}</Alert>)}
-      <Findings checks={report.checks} total={report.n_observations} selected={selected} onToggle={onToggle} busy={busy} loadHist={loadHist} unitReports={report.unit_reports} laterNote="For later, on the profile page:" />
+      <Findings checks={report.checks} total={report.n_observations} selected={selected} onChoose={onChoose} busy={busy} loadHist={loadHist} loadSeries={loadSeries} unitReports={report.unit_reports} laterNote="For later, on the profile page:" />
     </div>
   );
 }
@@ -226,11 +226,18 @@ export function ImportWizard({ onDone, onMore, onImported, dropped }: { onDone: 
       setPreview(rep); setPrevious(r.previous);
       // first run: what was chosen last time for this cohort, else the recommended ones;
       // later runs: keep the user's choices for findings already listed, recommended for new ones
-      setSelected((prev) => new Set(rep.checks.filter((c) => {
-        if (!c.action) return false;
-        if (first && r.previous && (r.previous.applied.includes(c.id) || r.previous.declined.includes(c.id))) return r.previous.applied.includes(c.id);
-        return known.has(c.id) ? prev.has(c.id) : c.recommended;
-      }).map((c) => c.id)));
+      setSelected((prev) => {
+        const n = new Set<string>();
+        for (const c of rep.checks) {
+          if (!c.action) continue;
+          let entry: string | null = c.recommended ? c.id : null;
+          const was = first && r.previous ? r.previous.applied.find((e) => e === c.id || e.startsWith(c.id + "#")) : undefined;
+          if (first && r.previous && (was || r.previous.declined.includes(c.id))) entry = was ?? null;
+          else if (known.has(c.id)) entry = entryFor(prev, c.id);
+          if (entry) n.add(entry);
+        }
+        return n;
+      });
       setStep(2);
     } catch (e) { fail(e); } finally { setBusy(null); setStage(null); }
   };
@@ -238,7 +245,9 @@ export function ImportWizard({ onDone, onMore, onImported, dropped }: { onDone: 
   const applied = preview?.applied ?? [];
   const toApply = [...applied, ...selected];
   const recheck = () => check(toApply, `Applying ${selected.size} fix${selected.size === 1 ? "" : "es"} and checking again…`);
-  const loadHist = (variable: string) => api.previewHist({ ...body(applied), variable }); // the state the findings describe
+  // the state the findings describe; with a fix, the histogram also shows its result
+  const loadHist: FixLoader = (variable, fix) => api.previewHist({ ...body(applied), variable, where: fix?.where ?? null, expr: fix ? fix.expr : null });
+  const loadSeries: SeriesLoader = (variable, encounter) => api.previewSeries({ ...body(applied), variable, encounter });
 
   const doImport = async () => {
     setErr(null);
@@ -376,7 +385,7 @@ export function ImportWizard({ onDone, onMore, onImported, dropped }: { onDone: 
 
       {step === 2 && preview && (
         <div className="stack rise" key="s2">
-          <Review report={preview} previous={previous} selected={selected} busy={!!busy} loadHist={loadHist} onToggle={(id, on) => setSelected((prev) => { const n = new Set(prev); if (on) n.add(id); else n.delete(id); return n; })} />
+          <Review report={preview} previous={previous} selected={selected} busy={!!busy} loadHist={loadHist} loadSeries={loadSeries} onChoose={(id, entry) => setSelected((prev) => withChoice(prev, id, entry))} />
           <label className="row"><input type="checkbox" checked={harmonize} onChange={(e) => setHarmonize(e.target.checked)} /> After the import, also apply the suggested harmonization (canonical variable names, static attributes, tags, processing defaults)</label>
           {busy && <BusyLine busy={busy} stage={stage} />}
           <div className="row spread">

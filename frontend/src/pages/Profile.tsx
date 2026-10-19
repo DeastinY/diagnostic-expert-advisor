@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useCohort } from "../App";
 import { api, fmt, type Suggestion } from "../api";
 import { AdvisorPanel } from "../components/AdvisorPanel";
-import { Findings, Verdict } from "../components/Findings";
+import { Findings, Verdict, withChoice } from "../components/Findings";
 import { ImportCard } from "../components/ImportCard";
 import { Alert, Card, Kpi, SeverityChip, Spinner, Tabs, toast, useAsync } from "../components/ui";
 import { VegaChart } from "../components/VegaChart";
@@ -70,8 +70,8 @@ export function Profile() {
           {checks.data && (
             <div className="stack">
               <Verdict checks={checks.data} fixable={fixable} />
-              <Findings checks={checks.data} total={detail.summary.n_observations} selected={selected} busy={busy} loadHist={(v) => api.hist(name, v)}
-                onToggle={(id, on) => setPicked((prev) => { const n = new Set(prev ?? selected); if (on) n.add(id); else n.delete(id); return n; })} laterNote="Without a fix:" />
+              <Findings checks={checks.data} total={detail.summary.n_observations} selected={selected} busy={busy} loadHist={(v, fix) => api.hist(name, v, fix)} loadSeries={(v, e) => api.series(name, v, e)}
+                onChoose={(id, entry) => setPicked((prev) => withChoice(prev ?? selected, id, entry))} laterNote="Without a fix:" />
             </div>
           )}
         </Card>

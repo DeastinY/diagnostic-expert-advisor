@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+Review step: what a fix does, with the data
+- Duplicates are two findings: exact repeats (same value, safe to drop, listed by variable)
+  and conflicting values at the same timestamp (two lab runs, a correction), which are listed
+  with their values and resolved only by an explicit choice: keep the first, keep the last,
+  keep the mean, or drop them all.
+- "Numbers stored as text" quotes the real values with their row counts, and says which rows
+  stay events.
+- A unit conversion shows example values before and after, how many rows already fit and
+  stay as they are, and "show before and after" draws both distributions.
+- Values out of range offer drop or clamp, and up to 25 of them can be decided one by one,
+  each with the encounter's series plotted around the flagged value.
+- A choice travels with the fix id (`range:MAP:above#clamp`, `...#rows=...`), so the CLI, the
+  API and the remembered choices of a re-import all understand it.
+
 First run on real data: the MIMIC-IV demo (100 patients, 140 ICU stays, 306k observations)
 imports in under a minute, on the command line and through the guided import.
 

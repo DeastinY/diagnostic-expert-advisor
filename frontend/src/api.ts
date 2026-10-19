@@ -36,6 +36,8 @@ export interface Suggestion {
 export interface Check {
   id: string; severity: "info" | "warning" | "error"; title: string; detail: string; variables: string[];
   action: Record<string, unknown> | null; n: number; recommended: boolean;
+  options?: { id: string; label: string; detail: string; action: Record<string, unknown> }[] | null;
+  examples?: Record<string, unknown> | null;
 }
 export interface SiteComparison {
   column: string | null; candidates: string[]; configured: string | null;
@@ -116,7 +118,11 @@ export interface Health {
     update_available: boolean | null; command: string[][] } | null;
 }
 
-export interface Hist { variable: string; label: string; unit: string; n: number; bins: { lo: number; hi: number; count: number }[]; range: [number, number] | null; concept: string | null }
+export interface Hist {
+  variable: string; label: string; unit: string; n: number; bins: { lo: number; hi: number; count: number }[]; range: [number, number] | null; concept: string | null;
+  after?: { bins: { lo: number; hi: number; count: number }[]; n: number; n_changed: number; n_unchanged: number };
+}
+export interface Series { variable: string; encounter: string; unit: string; hours: number[]; values: (number | null)[] }
 export interface Previous { applied: string[]; declined: string[]; n_encounters: number | null; n_observations: number | null; when: string }
 export interface PreviewResult { name: string; report: ImportReport; previous: Previous | null }
 export interface Job { id: string; kind: "preview" | "import"; status: "running" | "done" | "error"; stage: string; detail: string; elapsed: number; error: string | null; result?: unknown }
@@ -127,9 +133,14 @@ export const api = {
   startJob: (kind: "preview" | "import", body: ImportBody) =>
     request<{ id: string }>(`/api/jobs/${kind}`, { method: "POST", body: JSON.stringify(body) }),
   job: (id: string) => request<Job>(`/api/jobs/${id}`),
-  previewHist: (body: ImportBody & { variable: string }) =>
+  previewHist: (body: ImportBody & { variable: string; where?: string | null; expr?: string | null }) =>
     request<Hist>("/api/cohorts/preview/hist", { method: "POST", body: JSON.stringify(body) }),
-  hist: (name: string, variable: string) => request<Hist>(`/api/cohorts/${name}/hist?variable=${encodeURIComponent(variable)}`),
+  hist: (name: string, variable: string, fix?: { where: string; expr: string | null }) =>
+    request<Hist>(`/api/cohorts/${name}/hist${qs({ variable, where: fix?.where, expr: fix ? fix.expr ?? undefined : undefined })}`),
+  previewSeries: (body: ImportBody & { variable: string; encounter: string }) =>
+    request<Series>("/api/cohorts/preview/series", { method: "POST", body: JSON.stringify(body) }),
+  series: (name: string, variable: string, encounter: string) =>
+    request<Series>(`/api/cohorts/${name}/series${qs({ variable, encounter })}`),
   applyChecks: (name: string, ids: string[]) =>
     request<{ applied: string[] }>(`/api/cohorts/${name}/checks/apply`, { method: "POST", body: JSON.stringify({ ids }) }),
   cohorts: () => request<CohortInfo[]>("/api/cohorts"),

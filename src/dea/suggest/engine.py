@@ -337,12 +337,17 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
     fixes: list[dict[str, Any]] = []
     parse: list[str] = []
     unmap: list[str] = []
-    dedupe = drop_negative = drop_early = False
+    dedupes: list[str] = []
+    drop_negative = drop_early = False
     for s in suggestions:
         a = s.action or {}
         fixes += [a["fix"]] if "fix" in a else []
+        fixes += a.get("fixes", [])
         unmap += [a["unmap"]] if "unmap" in a else []
-        dedupe = dedupe or bool(a.get("dedupe"))
+        if a.get("dedupe"):  # True is the old spelling of "first"
+            how = "first" if a["dedupe"] is True else str(a["dedupe"])
+            if how not in dedupes:
+                dedupes.append(how)
         drop_negative = drop_negative or a.get("drop_time") == "negative"
         drop_early = drop_early or a.get("drop_time") == "early"
         parse += [a["parse"]["variable"]] if "parse" in a else []
@@ -368,8 +373,8 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
             f.get("description", ""),
             encounter_where=f.get("encounter_where"),
         )
-    if dedupe:
-        out = out.dedupe()
+    for how in sorted(dedupes, key=lambda h: h != "exact"):  # exact repeats go first
+        out = out.dedupe(how)
     if drop_negative:
         out = out.drop_before_admission()
     elif drop_early:

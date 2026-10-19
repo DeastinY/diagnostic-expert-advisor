@@ -8,7 +8,8 @@ pass over the observations plus a sample, so they stay cheap for MIMIC-sized coh
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+import re
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 
 import polars as pl
@@ -26,6 +27,10 @@ OUTLIER_FRACTION = 0.002  # below this share, out-of-range values are noise, not
 # Records up to this many hours before admission are the expected run-up (emergency
 # department labs); anything earlier belongs to another stay or a pre-admission visit.
 EARLY_LEAD_HOURS = 24
+REVIEW_MAX = 25  # up to this many out-of-range values are listed one by one for a decision
+_NUMBER = re.compile(
+    r"^\s*[-+]?\d+(?:[.,]\d+)?"
+)  # the same leading number parse_numeric_events takes
 
 
 @dataclass
@@ -38,9 +43,82 @@ class Check:
     action: dict[str, Any] | None = None
     n: int = 0
     recommended: bool = False  # the action is safe to apply without looking: on by default
+    # alternative ways to fix it, [{id, label, detail, action}]; ``action`` is the default one
+    options: list[dict[str, Any]] | None = None
+    # the data behind the finding, for display: samples, before/after values, listed rows
+    examples: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def choose(checks: list[Check], ids: list[str] | str) -> list[Check]:
+    """The checks whose fix was chosen, each with the chosen option as its action.
+
+    ``ids`` is ``"recommended"`` or entries of the form ``id`` (the default action),
+    ``id#option`` (one of the check's ``options``) or ``id#rows=enc:value:decision,...`` (a
+    decision per listed row: ``drop``, ``clamp`` or ``keep``). The entry becomes the returned
+    check's id, so what was applied is remembered with the choice.
+    """
+    if ids == "recommended":
+        return [c for c in checks if c.action and c.recommended]
+    by_id = {c.id: c for c in checks}
+    out = []
+    for entry in ids:
+        cid, _, choice = entry.partition("#")
+        c = by_id.get(cid)
+        if c is None or not c.action:
+            continue
+        chosen = replace(c, id=entry)
+        if choice.startswith("rows="):
+            chosen.action = _row_actions(c, choice[5:])
+        elif choice:
+            option = next((o for o in c.options or [] if o["id"] == choice), None)
+            if option is not None:
+                chosen.action = option["action"]
+            else:  # an option this check does not have: the default, remembered as such
+                chosen.id = cid
+        if chosen.action:
+            out.append(chosen)
+    return out
+
+
+def _row_actions(check: Check, spec: str) -> dict[str, Any] | None:
+    """Per-row decisions for a range finding: ``enc:value:drop|clamp|keep`` joined by commas."""
+    fix = (check.action or {}).get("fix")
+    bounds = (check.examples or {}).get("bounds")
+    if not fix or not bounds:
+        return None
+    lo, hi = bounds
+    fixes = []
+    for item in spec.split(","):
+        parts = item.rsplit(":", 2)
+        if len(parts) != 3:
+            continue
+        enc, value, decision = parts
+        try:
+            v = float(value)
+        except ValueError:
+            continue
+        if decision == "keep":
+            continue
+        expr = None if decision == "drop" else str(hi if v > hi else lo)
+        fixes.append(
+            {
+                "variable": fix["variable"],
+                "where": f"value = {v!r}",
+                "expr": expr,
+                "encounter_where": "encounter_id = '" + enc.replace("'", "''") + "'",
+                "description": (
+                    "dropped after review" if expr is None else f"clamped to {expr} after review"
+                ),
+            }
+        )
+    return {"fixes": fixes} if fixes else None
+
+
+def _quote(pairs: list[tuple[str, int]]) -> str:
+    return ", ".join(f"'{v}' ({n:,} rows)" for v, n in pairs)
 
 
 def apply_checks(cohort: Cohort, checks: list[Check]) -> Cohort:
@@ -194,6 +272,18 @@ def range_checks(cohort: Cohort, concepts: dict[str, Concept]) -> list[Check]:
                 continue
             where = f"value > {hi}" if side == "above" else f"value < {lo}"
             share = n_out / row["n"]
+            values = collect(
+                cohort.dynamic.filter(pl.col(VARIABLE) == var).select(ENCOUNTER_ID, TIME, VALUE)
+            )
+            hit = (pl.col(VALUE) > hi) if side == "above" else (pl.col(VALUE) < lo)
+            outside, inside = values.filter(hit), values.filter(~hit)
+            sample_out = sorted(outside.get_column(VALUE).unique().to_list())[:5]
+            sample_in = sorted(inside.get_column(VALUE).unique().to_list())[:5]
+            stays = {
+                "n": int(inside.height),
+                "sample": [float(v) for v in sample_in],
+                "median": float(inside.get_column(VALUE).median()) if inside.height else None,
+            }
             hypothesis = None
             for conv in units.conversions_into(c.ucum, c.name):
                 if lo <= conv.apply(med) <= hi:
@@ -211,7 +301,22 @@ def range_checks(cohort: Cohort, concepts: dict[str, Concept]) -> list[Check]:
                         detail=(
                             f"{n_out:,} values {side} the plausible range {lo}-{hi} {c.unit} "
                             f"(median {med:.3g}) fit {c.label} in {hypothesis.src}. Converting "
-                            f"them gives a median of {hypothesis.apply(med):.3g} {c.unit}."
+                            f"them gives a median of {hypothesis.apply(med):.3g} {c.unit}. "
+                            + (
+                                f"The other {stays['n']:,} value{'s' if stays['n'] != 1 else ''}"
+                                + (
+                                    f" (median {stays['median']:.3g})"
+                                    if stays["median"] is not None and stays["n"] > 1
+                                    else f" ({stays['median']:.3g})"
+                                    if stays["median"] is not None
+                                    else ""
+                                )
+                                + f" {'are' if stays['n'] != 1 else 'is'} already in range and "
+                                + f"stay{'' if stays['n'] != 1 else 's'} as "
+                                + f"{'they are' if stays['n'] != 1 else 'it is'}."
+                                if stays["n"]
+                                else "Every value is affected."
+                            )
                         ),
                         variables=[var],
                         action={
@@ -224,9 +329,29 @@ def range_checks(cohort: Cohort, concepts: dict[str, Concept]) -> list[Check]:
                         },
                         n=int(n_out),
                         recommended=True,
+                        examples={
+                            "bounds": [lo, hi],
+                            "side": side,
+                            "before": [float(v) for v in sample_out],
+                            "after": [float(hypothesis.apply(v)) for v in sample_out],
+                            "stats": {
+                                "before": float(med),
+                                "after": float(hypothesis.apply(med)),
+                            },
+                            "unchanged": stays,
+                        },
                     )
                 )
             else:
+                bound = hi if side == "above" else lo
+                drop_action = {
+                    "fix": {
+                        "variable": var,
+                        "where": where,
+                        "expr": None,
+                        "description": f"implausible values {side} {lo}-{hi} dropped",
+                    }
+                }
                 out.append(
                     Check(
                         id=f"range:{var}:{side}",
@@ -235,18 +360,54 @@ def range_checks(cohort: Cohort, concepts: dict[str, Concept]) -> list[Check]:
                         detail=(
                             f"{n_out:,} values {side} {lo}-{hi} {c.unit} for {c.label} "
                             f"(median {med:.3g}). No unit conversion explains them; they are "
-                            "probably entry errors or a different measurement."
+                            "probably entry errors or a different measurement. Drop them, "
+                            "clamp them to the range, or leave them"
+                            + (" and decide one by one below." if n_out <= REVIEW_MAX else ".")
                         ),
                         variables=[var],
-                        action={
-                            "fix": {
-                                "variable": var,
-                                "where": where,
-                                "expr": None,
-                                "description": f"implausible values {side} {lo}-{hi} dropped",
-                            }
-                        },
+                        action=drop_action,
+                        options=[
+                            {
+                                "id": "drop",
+                                "label": "drop them",
+                                "detail": "the rows disappear",
+                                "action": drop_action,
+                            },
+                            {
+                                "id": "clamp",
+                                "label": f"clamp them to {bound:g}",
+                                "detail": "the rows stay, at the edge of the plausible range",
+                                "action": {
+                                    "fix": {
+                                        "variable": var,
+                                        "where": where,
+                                        "expr": str(bound),
+                                        "description": f"values {side} {lo}-{hi} clamped",
+                                    }
+                                },
+                            },
+                        ],
                         n=int(n_out),
+                        examples={
+                            "bounds": [lo, hi],
+                            "side": side,
+                            "before": [float(v) for v in sample_out],
+                            "unchanged": stays,
+                            "rows": (
+                                [
+                                    {
+                                        "encounter": e,
+                                        "hours": round(t.total_seconds() / 3600, 2),
+                                        "value": float(v),
+                                    }
+                                    for e, t, v in outside.sort(VALUE, descending=side == "above")
+                                    .head(REVIEW_MAX)
+                                    .iter_rows()
+                                ]
+                                if n_out <= REVIEW_MAX
+                                else None
+                            ),
+                        },
                     )
                 )
     return out
@@ -299,6 +460,115 @@ def cluster_checks(cohort: Cohort, skip: set[str], bins: int = 24) -> list[Check
     return out
 
 
+def duplicate_checks(cohort: Cohort) -> list[Check]:
+    """Repeated (encounter, time, variable) keys, told apart by whether the value repeats too.
+
+    Exact repeats (same value) carry no information and are safe to drop. Keys with *different*
+    values are a second lab run, a correction or two source items merged under one name; those
+    are listed with their values and resolved only by an explicit choice.
+    """
+    key = [ENCOUNTER_ID, TIME, VARIABLE]
+    dyn = cohort.dynamic
+    groups = collect(
+        dyn.group_by(key)
+        .agg(pl.len().alias("k"), pl.col(VALUE).n_unique().alias("nv"))
+        .filter(pl.col("k") > 1)
+    )
+    out: list[Check] = []
+    if not groups.height:
+        return out
+    exact = int((groups["k"] - groups["nv"]).sum())
+    if exact:
+        top = (
+            groups.with_columns((pl.col("k") - pl.col("nv")).alias("extra"))
+            .group_by(VARIABLE)
+            .agg(pl.col("extra").sum())
+            .filter(pl.col("extra") > 0)
+            .sort(["extra", VARIABLE], descending=[True, False])
+            .head(6)
+        )
+        listed = ", ".join(f"'{v}' ({n:,})" for v, n in top.iter_rows())
+        out.append(
+            Check(
+                id="duplicates",
+                severity="warning",
+                title=f"{exact:,} exact duplicate observation(s)",
+                detail=(
+                    "The same encounter, time, variable and value recorded more than once, "
+                    f"mostly {listed}. Exact repeats carry no information; one copy is kept."
+                ),
+                action={"dedupe": "exact"},
+                n=exact,
+                recommended=True,
+                examples={"top": [{"variable": v, "n": int(n)} for v, n in top.iter_rows()]},
+            )
+        )
+    conflicting = groups.filter(pl.col("nv") > 1)
+    if conflicting.height:
+        n_rows = int((conflicting["nv"] - 1).sum())
+        sample = conflicting.sort([VARIABLE, ENCOUNTER_ID, TIME]).head(8).select(key)
+        rows = collect(
+            dyn.join(sample.lazy(), on=key, how="inner")
+            .group_by(key)
+            .agg(pl.col(VALUE).alias("values"))
+            .sort([VARIABLE, ENCOUNTER_ID, TIME])
+        )
+        options = [
+            {
+                "id": "first",
+                "label": "keep the first value",
+                "detail": "the row that came first in the source",
+                "action": {"dedupe": "first"},
+            },
+            {
+                "id": "last",
+                "label": "keep the last value",
+                "detail": "a later entry is usually the correction",
+                "action": {"dedupe": "last"},
+            },
+            {
+                "id": "mean",
+                "label": "keep the mean",
+                "detail": "one averaged observation per timestamp",
+                "action": {"dedupe": "mean"},
+            },
+            {
+                "id": "drop",
+                "label": "drop all of them",
+                "detail": "no value at those timestamps",
+                "action": {"dedupe": "drop"},
+            },
+        ]
+        out.append(
+            Check(
+                id="duplicates:conflicting",
+                severity="warning",
+                title=f"{n_rows:,} conflicting value(s) at the same time",
+                detail=(
+                    f"{conflicting.height:,} timestamps where the same variable was recorded "
+                    "with different values: two lab runs, a correction, or two source items "
+                    "merged under one name. These are not duplicates; nothing happens until "
+                    "you pick how to resolve them."
+                ),
+                action=options[0]["action"],
+                options=options,
+                n=n_rows,
+                examples={
+                    "rows": [
+                        {
+                            "encounter": e,
+                            "hours": round(t.total_seconds() / 3600, 2),
+                            "variable": v,
+                            "values": [float(x) for x in vals],
+                        }
+                        for e, t, v, vals in rows.iter_rows()
+                    ]
+                },
+            )
+        )
+    return out
+
+
 def structural_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
     out = []
     n_enc = len(cohort)
@@ -313,26 +583,7 @@ def structural_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
             pl.col(VALUE).is_nan().sum().alias("nan"),
         )
     ).row(0, named=True)
-    dup = int(
-        collect(
-            dyn.group_by(ENCOUNTER_ID, TIME, VARIABLE)
-            .agg(pl.len().alias("k"))
-            .select((pl.col("k") - 1).sum())
-        ).item()
-    )
-    if dup:
-        out.append(
-            Check(
-                id="duplicates",
-                severity="warning",
-                title=f"{dup:,} duplicate observation(s)",
-                detail="Same encounter, time and variable recorded more than once; the first "
-                "value is kept when deduplicating.",
-                action={"dedupe": True},
-                n=int(dup),
-                recommended=True,
-            )
-        )
+    out += duplicate_checks(cohort)
     if counts["early"]:
         earliest = -counts["earliest"].total_seconds() / 3600
         out.append(
@@ -460,18 +711,45 @@ def event_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
         )
         shown = sum(n for _, n in e.top_values)
         if shown and numeric_like / shown >= 0.8:
+            counts = collect(
+                cohort.events.filter(pl.col(VARIABLE) == e.name)
+                .group_by(pl.col(VALUE).cast(pl.String()))
+                .agg(pl.len().alias("n"))
+                .sort(["n", VALUE], descending=[True, False])
+            )
+            pairs = [(str(v), int(n)) for v, n in counts.iter_rows()]
+            parsed_top = [(v, n) for v, n in pairs if _NUMBER.match(v)]
+            kept_top = [(v, n) for v, n in pairs if not _NUMBER.match(v)]
+            n_parsed = sum(n for _, n in parsed_top)
+            n_kept = sum(n for _, n in kept_top)
+            detail = (
+                f"Values such as {_quote(parsed_top[:3])} are numbers with text glued on; as "
+                f"events they take no part in aggregates. The leading number of {n_parsed:,} "
+                "rows becomes an observation"
+            )
+            if n_kept:
+                detail += f"; {n_kept:,} rows without one"
+                if kept_top:
+                    detail += f", such as {_quote(kept_top[:2])},"
+                detail += " stay events."
+            else:
+                detail += "."
             out.append(
                 Check(
                     id=f"events-numeric:{e.name}",
                     severity="warning",
                     title=f"'{e.name}' holds numbers stored as text",
-                    detail="Most values look like '37.2 C' or '98'; as events they do not take "
-                    "part in aggregates. The leading number can be parsed into an observation; "
-                    "rows without one stay events.",
+                    detail=detail,
                     variables=[e.name],
                     action={"parse": {"variable": e.name}},
-                    n=e.n_observations,
+                    n=n_parsed,
                     recommended=True,
+                    examples={
+                        "parsed": [{"value": v, "n": n} for v, n in parsed_top[:6]],
+                        "kept": [{"value": v, "n": n} for v, n in kept_top[:6]],
+                        "n_parsed": n_parsed,
+                        "n_kept": n_kept,
+                    },
                 )
             )
     return out
