@@ -108,5 +108,7 @@ def load_dictionary(path: Path | None = None) -> Dictionary:
     return Dictionary(concepts)
 
 
+@lru_cache(maxsize=8192)
 def match_variable(variable: str) -> tuple[Concept, float] | None:
+    """:meth:`Dictionary.match` against the bundled dictionary, cached per name."""
     return load_dictionary().match(variable)

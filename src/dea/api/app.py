@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from dea import __version__
-from dea.core import Cohort, FilterError, Rule
+from dea.core import Cohort, Encounter, FilterError, Rule
 from dea.core.config import ProcessingConfig
 from dea.core.model import VARIABLE, collect
 from dea.core.time import format_duration
@@ -882,6 +882,13 @@ def create_app(
             "tags": [r.label for r in cohort.config.tags],
         }
 
+    def _default_panels(cohort: Cohort, e: Encounter, limit: int = 6) -> list[str]:
+        """The configured plots that this encounter has, else its most relevant signals."""
+        from dea.charts import rank_panels
+
+        chosen = [v for v in cohort.config.plots if v in e.variables]
+        return chosen or rank_panels(e, cohort.config)[:limit]
+
     @app.get("/api/cohorts/{name}/encounters/{eid}")
     def encounter(name: str, eid: str) -> dict[str, Any]:
         cohort = store.get(name)
@@ -910,7 +917,7 @@ def create_app(
                 ),
                 500,
             ),
-            "plots": [v for v in cohort.config.plots if v in e.variables] or e.variables[:6],
+            "plots": _default_panels(cohort, e),
         }
 
     @app.get("/api/cohorts/{name}/encounters/{eid}/chart")
@@ -930,7 +937,7 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         cfg = cohort.config
-        chosen = variables or [v for v in cfg.plots if v in e.variables] or e.variables[:6]
+        chosen = variables or _default_panels(cohort, e)
         bands: dict[str, pl.DataFrame] = {}
         if band and len(cohort) > 1:
             horizon = int(e.los_hours) + 2

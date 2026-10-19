@@ -6,6 +6,8 @@ from dea.core import Cohort
 from dea.io import load_cohort
 from dea.io.mimic import import_mimic
 from dea.suggest import apply_suggestions, load_dictionary, match_variable, suggest
+from dea.suggest.engine import unit_fits
+from dea.suggest.units import load_units
 from dea.synth import generate_cohort, write_mimic_demo
 
 
@@ -82,3 +84,26 @@ def test_matching_keeps_systolic_diastolic_and_mean_apart() -> None:
     assert d.match("Non Invasive Blood Pressure mean")[0].name == "map"
     manual = d.match("Manual Blood Pressure Systolic Left")
     assert manual is None or manual[0].name != "dbp"
+
+
+def test_drug_level_is_not_renamed_to_the_dose(tmp_path: Path) -> None:
+    # MIMIC's lab "Vancomycin" (ug/mL) is the serum level; the dictionary's vancomycin is a
+    # dose in mg. The name matches, the unit cannot, so no rename is proposed.
+    cohort = generate_cohort(4, seed=3, max_hours=24).rename_variables({"Lactate": "Vancomycin"})
+    cohort.config.variable_units["Vancomycin"] = "ug/mL"
+    sugg = {s.id: s for s in suggest(cohort)}
+    assert "rename:Vancomycin" not in sugg
+    assert "Vancomycin" not in (sugg["plots"].action["plots"] if "plots" in sugg else [])
+    cohort.config.variable_units["Vancomycin"] = "mg"
+    sugg = {s.id: s for s in suggest(cohort)}
+    assert sugg["rename:Vancomycin"].action["rename"] == {"Vancomycin": "vancomycin"}
+
+
+def test_unit_fits_screens_only_concentrations_under_drug_names() -> None:
+    d, units = load_dictionary(), load_units()
+    vanco, propofol, wbc = d.by_name["vancomycin"], d.by_name["propofol"], d.by_name["wbc"]
+    assert not unit_fits(units, "ug/mL", vanco)
+    assert not unit_fits(units, "mg/L", vanco) and not unit_fits(units, "umol/L", vanco)
+    assert unit_fits(units, "mg", vanco) and unit_fits(units, "", vanco)
+    assert unit_fits(units, "mcg/kg/min", propofol)  # a rate in another unit: the normalizer's job
+    assert unit_fits(units, "G/L", wbc)  # not a drug: a count per volume is what it should be

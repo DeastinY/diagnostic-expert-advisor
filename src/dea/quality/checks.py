@@ -23,6 +23,9 @@ from dea.suggest.vocab import Concept, load_dictionary
 Severity = Literal["info", "warning", "error"]
 MIN_ROWS = 5  # never report a finding backed by fewer rows (k-anonymity)
 OUTLIER_FRACTION = 0.002  # below this share, out-of-range values are noise, not a unit problem
+# Records up to this many hours before admission are the expected run-up (emergency
+# department labs); anything earlier belongs to another stay or a pre-admission visit.
+EARLY_LEAD_HOURS = 24
 
 
 @dataclass
@@ -304,6 +307,8 @@ def structural_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
         dyn.select(
             pl.len().alias("n"),
             (pl.col(TIME) < pl.duration(seconds=0)).sum().alias("negative"),
+            (pl.col(TIME) < pl.duration(hours=-EARLY_LEAD_HOURS)).sum().alias("early"),
+            pl.col(TIME).min().alias("earliest"),
             (pl.col(TIME) > pl.duration(days=90)).sum().alias("late"),
             pl.col(VALUE).is_nan().sum().alias("nan"),
         )
@@ -328,17 +333,40 @@ def structural_checks(cohort: Cohort, profile: CohortProfile) -> list[Check]:
                 recommended=True,
             )
         )
-    if counts["negative"]:
+    if counts["early"]:
+        earliest = -counts["earliest"].total_seconds() / 3600
+        out.append(
+            Check(
+                id="time:early",
+                severity="warning",
+                title=(
+                    f"{counts['early']:,} observation(s) more than {EARLY_LEAD_HOURS} h "
+                    "before admission"
+                ),
+                detail=(
+                    f"The earliest is {earliest:,.0f} h before admission. Records that far back "
+                    "are not part of this stay: a weight or height from an earlier hospital "
+                    "admission, alarm limits of a previous ICU stay, or a wrong admission time. "
+                    "They distort the first hours of every chart and feature, so dropping them "
+                    "is the safe default."
+                ),
+                action={"drop_time": "early"},
+                n=int(counts["early"]),
+                recommended=True,
+            )
+        )
+    shortly = int(counts["negative"] - counts["early"])
+    if shortly:
         out.append(
             Check(
                 id="time:negative",
-                severity="warning",
-                title=f"{counts['negative']:,} observation(s) before admission",
-                detail="Negative time offsets: records that pre-date the admission time (labs "
-                "drawn in the emergency department are the common, legitimate case). They can "
-                "be dropped if your question starts at admission.",
+                severity="info",
+                title=(f"{shortly:,} observation(s) in the {EARLY_LEAD_HOURS} h before admission"),
+                detail="A short run-up before the admission time is expected: labs drawn in "
+                "the emergency department belong to the stay and are kept by default. Drop "
+                "them only if your question starts exactly at admission.",
                 action={"drop_time": "negative"},
-                n=int(counts["negative"]),
+                n=shortly,
             )
         )
     if counts["late"]:

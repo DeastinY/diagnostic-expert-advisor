@@ -705,13 +705,26 @@ class Cohort:
             _full=self._full,
         )
 
-    def drop_before_admission(self) -> Cohort:
-        """Drop observations and events with a negative time offset."""
-        keep = pl.col(TIME) >= pl.duration(seconds=0)
+    def drop_before_admission(self, lead_hours: float = 0) -> Cohort:
+        """Drop observations and events more than ``lead_hours`` before admission.
+
+        With the default of zero every negative time offset goes; a positive lead keeps the
+        short run-up (labs drawn in the emergency department) and drops only what lies further
+        back, such as a pre-admission weight or the alarm limits of an earlier stay.
+        """
+        keep = pl.col(TIME) >= pl.duration(hours=-lead_hours)
         config = self.config.model_copy(deep=True)
-        config.value_fixes.append(
-            ValueFix(variable="*", where="time < 0", description="rows before admission removed")
-        )
+        if lead_hours:
+            fix = ValueFix(
+                variable="*",
+                where=f"time < -{lead_hours:g}h",
+                description=f"rows more than {lead_hours:g} h before admission removed",
+            )
+        else:
+            fix = ValueFix(
+                variable="*", where="time < 0", description="rows before admission removed"
+            )
+        config.value_fixes.append(fix)
         return Cohort(
             self.static,
             self.dynamic.filter(keep),

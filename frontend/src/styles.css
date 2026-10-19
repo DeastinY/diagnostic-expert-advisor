@@ -45,7 +45,9 @@ p { margin: 0 0 8px; }
 code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 
 /* layout */
-.shell { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+/* the content column is minmax(0, 1fr), not 1fr: a chart that was drawn at a wider window must
+   not hold the column open (Vega re-measures its container and redraws once the column shrinks) */
+.shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
 .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 18px 14px; display: flex; flex-direction: column; gap: 18px; position: sticky; top: 0; height: 100vh; overflow: auto; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; padding: 2px 6px; }
 .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
@@ -53,7 +55,7 @@ code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); 
 .nav a.active, .nav a:hover { background: var(--surface-2); color: var(--ink); }
 .nav a.active { background: var(--accent-soft); color: var(--accent); }
 .nav .group { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 6px 10px 2px; }
-.main { padding: 26px 32px 60px; max-width: 1360px; width: 100%; }
+.main { padding: 26px 32px 60px; max-width: 1360px; width: 100%; min-width: 0; }
 .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
 
 /* cards & grid */
@@ -63,7 +65,7 @@ code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); 
 .grid.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .grid.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid.c4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-@media (max-width: 1000px) { .grid.c2, .grid.c3, .grid.c4 { grid-template-columns: 1fr; } .shell { grid-template-columns: 1fr; } .sidebar { position: static; height: auto; } }
+@media (max-width: 1000px) { .grid.c2, .grid.c3, .grid.c4 { grid-template-columns: minmax(0, 1fr); } .shell { grid-template-columns: minmax(0, 1fr); } .sidebar { position: static; height: auto; } }
 .stack { display: flex; flex-direction: column; gap: 16px; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .spread { justify-content: space-between; }

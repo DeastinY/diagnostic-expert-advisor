@@ -108,6 +108,16 @@ function BusyLine({ busy, stage }: { busy: string; stage: { text: string; elapse
   );
 }
 
+/** Cohort name proposed from a pasted path: its last segment, or the parent when that is
+ *  only a version number ("…/mimic-iv-demo/2.2" → "mimic-iv-demo"). */
+export function nameFromPath(p: string): string {
+  const parts = p.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
+  const last = (parts.pop() ?? "").replace(/\.[^.]+$/, "");
+  if (/[A-Za-z]/.test(last) || parts.length === 0) return last;
+  const parent = parts[parts.length - 1];
+  return /[A-Za-z]/.test(parent) ? parent : last;
+}
+
 export function ImportWizard({ onDone, onMore, onImported, dropped }: { onDone: (name: string, where: "overview" | "profile") => void; onMore?: () => void; onImported?: () => void; dropped?: Picked[] | null }) {
   const [step, setStep] = useState(0);
   const [path, setPath] = useState("");
@@ -138,7 +148,7 @@ export function ImportWizard({ onDone, onMore, onImported, dropped }: { onDone: 
     try {
       const d = await api.detect(p);
       setDet(d); setStaged(p); setNFiles(null); setOv({});
-      if (!name) setName(p.replace(/\/+$/, "").split("/").pop()?.replace(/\.[^.]+$/, "") ?? "");
+      if (!name) setName(nameFromPath(p));
       setStep(1);
     } catch (e) { fail(e); } finally { setBusy(null); }
   };

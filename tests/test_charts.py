@@ -108,3 +108,64 @@ def test_coverage_matrix_starts_at_admission(cohort: Cohort) -> None:
     )
     m = shifted.coverage_matrix(every="4h", max_hours=48)
     assert (m["hours"] >= 0).all()
+
+
+def test_rank_panels_puts_vital_signs_first_and_constants_last(cohort: Cohort) -> None:
+    from dea.charts import rank_panels
+
+    e = cohort.get(cohort.static["encounter_id"][0])
+    assert e.variables[0] == "Bed_Number"  # alphabetical, what the page used to show first
+    ranked = rank_panels(e, cohort.config)
+    assert set(ranked) == set(e.variables)
+    assert set(ranked[:5]) == {"HR", "MAP", "RR", "SpO2", "Temp"}  # the vital signs, by count
+    assert ranked.index("Horowitz") < ranked.index("Lactate") < ranked.index("Norepinephrine")
+    assert ranked[-1] == "Bed_Number"  # constant within the stay
+
+
+def test_interventions_rail_ranks_kinds_by_hours_covered(cohort: Cohort) -> None:
+    # one long ventilation episode among many kinds of short boluses: by frequency it would
+    # never make the rail, by time covered it leads it; events keep ranking by frequency
+    from datetime import timedelta
+
+    from dea.core import Encounter
+    from dea.core.model import END, START
+
+    enc = cohort.get(cohort.encounter_ids[0])
+    rows = [("Invasive Ventilation", 0.0, 100.0, 1.0)]
+    for k in range(20):  # 20 kinds x 5 boluses of a quarter hour each
+        rows += [(f"Bolus {k:02d}", float(h), h + 0.25, 250.0) for h in range(5)]
+    intervals = pl.DataFrame(
+        {
+            "encounter_id": [enc.id] * len(rows),
+            "variable": [r[0] for r in rows],
+            START: [timedelta(hours=r[1]) for r in rows],
+            END: [timedelta(hours=r[2]) for r in rows],
+            "value": [r[3] for r in rows],
+        }
+    )
+    frame = intervals.select(
+        (pl.col(START).dt.total_seconds() / 3600).alias("start_h"),
+        (pl.col(END).dt.total_seconds() / 3600).alias("end_h"),
+        "variable",
+        "value",
+    )
+    kept, kinds, title = charts._rail_rows(frame, "Interventions", duration=("start_h", "end_h"))
+    assert kinds[0] == "Invasive Ventilation" and len(kinds) == charts.MAX_RAIL_ROWS
+    assert title == "Interventions (12 of 21 kinds, by time covered)"
+    assert kept.height == 1 + 11 * 5
+    _, by_count, title = charts._rail_rows(frame, "Events")
+    assert "Invasive Ventilation" not in by_count and title.endswith("by frequency)")
+
+    eid = pl.lit(enc.id).alias("encounter_id")  # an Encounter strips the id from its frames
+    with_vent = Encounter(
+        enc.id,
+        enc.static,
+        enc.dynamic.with_columns(eid),
+        enc.events.with_columns(eid),
+        intervals,
+        enc.config,
+    )
+    spec = _ok(charts.small_multiples(with_vent, ["HR"], None))
+    rail = spec["vconcat"][0]
+    assert "by time covered" in rail["title"]["text"]
+    assert rail["encoding"]["color"]["scale"]["domain"][0] == "Invasive Ventilation"

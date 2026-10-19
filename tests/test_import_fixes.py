@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import polars as pl
@@ -64,22 +65,29 @@ def test_fixes_at_import(tmp_path: Path) -> None:
     _, before = import_path(tmp_path / "obs.csv", name="f", unit_col="unit")
     ids = {c.id: c for c in before.checks}
     assert ids["duplicates"].recommended and ids["events-numeric:Head of Bed"].recommended
+    # the short run-up before admission is expected and stays; only rows further back than
+    # a day are recommended for dropping (hours -25 to -29 here)
     assert "drop_time" in ids["time:negative"].action and not ids["time:negative"].recommended
-    assert before.to_dict()["summary"]["recommended"] == 2
+    assert ids["time:negative"].n == 24 and ids["time:negative"].severity == "info"
+    assert ids["time:early"].recommended and ids["time:early"].n == 5
+    assert before.to_dict()["summary"]["recommended"] == 3
 
     cohort, after = import_path(
         tmp_path / "obs.csv", name="f", unit_col="unit", fixes="recommended"
     )
-    assert set(after.applied) == {"duplicates", "events-numeric:Head of Bed"}
+    assert set(after.applied) == {"duplicates", "events-numeric:Head of Bed", "time:early"}
     left = {c.id for c in after.checks}
     assert "duplicates" not in left and "events-numeric:Head of Bed" not in left
+    assert "time:early" not in left
     assert "time:negative" in left  # not recommended, so still there
+    assert cohort.dynamic.select(pl.col("time").min()).collect().item() == timedelta(hours=-24)
     assert "Head of Bed" in cohort.variables  # parsed into observations
     hob = cohort.dynamic.filter(pl.col("variable") == "Head of Bed").collect()
     assert hob.height == 30 and set(hob["value"].to_list()) == {30.0, 31.0, 32.0}
     assert "Head of Bed" not in cohort.event_variables
     assert [f.description for f in cohort.config.value_fixes] == [
         "duplicate rows removed",
+        "rows more than 24 h before admission removed",
         "numbers parsed from text",
     ]
 

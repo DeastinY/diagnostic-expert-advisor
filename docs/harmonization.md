@@ -20,7 +20,8 @@ provenance of every stored value stays visible.
 | range | values outside the plausible range of a dictionary concept; when a known conversion moves the median outlier into range the finding names the unit (e.g. "1.2% of 'Temp' look like [degF]") | warning | convert, or drop the implausible rows |
 | cluster | two separated value clusters in a variable the dictionary does not know (a unit mix, two devices, two measurements under one name) | warning | none, rename or split manually |
 | duplicates | the same encounter, time and variable recorded more than once | warning | keep the first |
-| time | observations before admission, or more than 90 days after it | warning | none |
+| time | observations more than 24 h before admission (an earlier admission's weight, a previous stay's alarm limits) | warning | drop them (recommended) |
+| time | observations in the 24 h before admission (emergency department labs: expected and kept), or more than 90 days after it | info / warning | drop the run-up if your question starts at admission |
 | encounters | encounters without any observation | warning | filter "Has observations" |
 | static | columns missing for more than 30% of encounters, ages above 120 | info / warning | none |
 | events | string variables that are really numbers with a unit glued on ("37.2 C") | warning | clean the source |

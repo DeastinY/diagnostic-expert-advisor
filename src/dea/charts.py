@@ -16,7 +16,21 @@ import altair as alt
 import polars as pl
 
 from dea.core import TIME, VALUE, VARIABLE, Encounter
+from dea.core.config import CohortConfig
 from dea.core.model import END, START
+from dea.suggest.vocab import match_variable
+
+# Panel order on the patient page: what a clinician looks at first. Dictionary roles not listed
+# (demographics) rank after these, then names the dictionary does not know, then constants.
+PANEL_ROLES = (
+    "vital_sign",
+    "blood_gas",
+    "ventilation",
+    "laboratory",
+    "medication",
+    "fluid_balance",
+    "score",
+)
 
 # Charts are sized by the code that builds them (top-N variables, bins, samples), not by
 # Altair's 5,000-row guard, which a real ICU cohort trips on the first page.
@@ -346,18 +360,30 @@ def distribution_gallery(
 MAX_RAIL_ROWS = 12  # a MIMIC stay has over a hundred kinds of events; the rail shows the busiest
 
 
-def _rail_rows(frame: pl.DataFrame, title: str) -> tuple[pl.DataFrame, list[str], str]:
-    """Keep the ``MAX_RAIL_ROWS`` most frequent kinds of a rail and say how many were left out."""
+def _rail_rows(
+    frame: pl.DataFrame, title: str, duration: tuple[str, str] | None = None
+) -> tuple[pl.DataFrame, list[str], str]:
+    """Keep the ``MAX_RAIL_ROWS`` kinds that matter most and say how many were left out.
+
+    Intervals (``duration`` names their start and end columns) rank by the hours they cover,
+    so one long ventilation episode beats a hundred short saline boluses; events have no
+    duration and rank by how often they occur.
+    """
+    if duration:
+        start, end = duration
+        weight, how = (pl.col(end) - pl.col(start)).sum(), "by time covered"
+    else:
+        weight, how = pl.len(), "by frequency"
     kinds = (
         frame.group_by(VARIABLE)
-        .agg(pl.len().alias("n"))
-        .sort(["n", VARIABLE], descending=[True, False])
+        .agg(weight.alias("w"))
+        .sort(["w", VARIABLE], descending=[True, False])
         .get_column(VARIABLE)
         .to_list()
     )
     keep = kinds[:MAX_RAIL_ROWS]
     if len(kinds) > len(keep):
-        title = f"{title} ({len(keep)} of {len(kinds)} kinds, by frequency)"
+        title = f"{title} ({len(keep)} of {len(kinds)} kinds, {how})"
         frame = frame.filter(pl.col(VARIABLE).is_in(keep))
     return frame, keep, title
 
@@ -519,6 +545,39 @@ def trajectory(
     return _apply(alt.vconcat(main, small, spacing=4).resolve_scale(x="shared", color="shared"), t)
 
 
+def rank_panels(encounter: Encounter, config: CohortConfig | None = None) -> list[str]:
+    """The encounter's variables in the order they deserve a panel.
+
+    Dictionary-matched vital signs and blood gases come first, then ventilation, labs and
+    drugs, each group by number of observations; unmatched names follow by their count, and
+    variables that never change during the stay (alarm limits, catheter sizes) come last,
+    where they do not push heart rate off the default selection. The stored ``plots``
+    selection, when set, still wins over this order on the patient page.
+    """
+    config = config or encounter.config
+    unmapped = set(config.unmapped) if config else set()
+    dropped = set(config.processing.drop_variables) if config else set()
+    stats = (
+        encounter.dynamic.group_by(VARIABLE)
+        .agg(pl.len().alias("n"), pl.col(VALUE).n_unique().alias("distinct"))
+        .iter_rows()
+    )
+    ranked = []
+    for var, n, distinct in stats:
+        if distinct <= 1 or var in dropped:
+            group = len(PANEL_ROLES) + 2
+        else:
+            match = None if var in unmapped else match_variable(var)
+            role = match[0].role if match else None
+            group = (
+                PANEL_ROLES.index(role)
+                if role in PANEL_ROLES
+                else (len(PANEL_ROLES) if match else len(PANEL_ROLES) + 1)
+            )
+        ranked.append((group, -n, var))
+    return [var for _, _, var in sorted(ranked)]
+
+
 def small_multiples(
     encounter: Encounter,
     variables: Sequence[str],
@@ -564,7 +623,7 @@ def small_multiples(
             (pl.col(START).dt.total_seconds() / 3600.0).alias("start_h"),
             (pl.col(END).dt.total_seconds() / 3600.0).alias("end_h"),
         ).select("start_h", "end_h", VARIABLE, VALUE)
-        iv, kinds_iv, title_iv = _rail_rows(iv, "Interventions")
+        iv, kinds_iv, title_iv = _rail_rows(iv, "Interventions", duration=("start_h", "end_h"))
         rail_iv = (
             alt.Chart(iv.to_pandas())
             .mark_bar(height=10, cornerRadius=2)

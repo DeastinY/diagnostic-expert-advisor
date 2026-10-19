@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import polars as pl
@@ -148,3 +149,42 @@ def test_ph_recorded_in_units_is_a_ph() -> None:
     assert frame["variable"].n_unique() == 2
     (rep,) = reports
     assert rep.converted == {"U": 1} and not rep.unconvertible
+
+
+def _cohort_with_lead(tmp_path: Path) -> Cohort:
+    """Synthetic cohort with a handful of rows shortly before and long before admission."""
+    cohort = generate_cohort(6, seed=9, max_hours=48)
+    dyn = cohort.dynamic.collect()
+    rows = pl.int_range(pl.len())
+    dyn = dyn.with_columns(
+        pl.when(rows < 8)
+        .then(pl.lit(timedelta(hours=-3)))  # emergency department labs
+        .when(rows < 13)
+        .then(pl.lit(timedelta(hours=-400)))  # a weight from an earlier admission
+        .otherwise(pl.col("time"))
+        .alias("time")
+    )
+    out = Cohort(cohort.static, dyn.lazy(), events=cohort.events, config=cohort.config)
+    out.save(tmp_path / "lead")
+    return load_cohort(tmp_path / "lead")
+
+
+def test_rows_long_before_admission_are_their_own_check(tmp_path: Path) -> None:
+    cohort = _cohort_with_lead(tmp_path)
+    checks = {c.id: c for c in run_checks(cohort)}
+    early, shortly = checks["time:early"], checks["time:negative"]
+    assert early.n == 5 and early.recommended and early.severity == "warning"
+    assert early.action == {"drop_time": "early"} and "400 h" in early.detail
+    assert shortly.n == 8 and not shortly.recommended and shortly.severity == "info"
+    assert shortly.action == {"drop_time": "negative"} and "expected" in shortly.detail
+
+    sugg = {s.id: s for s in suggest(cohort)}
+    kept = apply_suggestions(cohort, [sugg["check:time:early"]])
+    assert kept.dynamic.select(pl.col("time").min()).collect().item() == timedelta(hours=-3)
+    assert [f.where for f in kept.config.value_fixes][-1] == "time < -24h"
+    after = {c.id: c for c in run_checks(kept)}
+    assert "time:early" not in after and after["time:negative"].n == 8
+
+    none = apply_suggestions(cohort, [sugg["check:time:negative"]])
+    assert none.dynamic.select(pl.col("time").min()).collect().item() >= timedelta(0)
+    assert not any(c.id.startswith("time:") for c in run_checks(none))

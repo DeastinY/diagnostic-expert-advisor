@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -10,6 +11,7 @@ import polars as pl
 from dea.core.config import Rule
 from dea.core.model import ENCOUNTER_ID, Cohort
 from dea.profile import CohortProfile, VariableProfile, profile_cohort
+from dea.suggest.units import UnitTable, load_units
 from dea.suggest.vocab import Concept, load_dictionary
 
 Kind = Literal["harmonize", "static", "drop", "processing", "tag", "filter", "plot", "quality"]
@@ -26,6 +28,8 @@ CLINICAL_TAGS: list[tuple[str, str, str, str, float, str]] = [
     ("temperature", "Fever", "max", ">", 38.3, "Temperature above 38.3 °C at any time"),
 ]
 PLOT_ROLES = ("vital_sign", "blood_gas", "ventilation", "medication")
+# mass or amount per volume (ug/mL, mg/dL, mmol/L, U/L): a level, never a dose
+_CONCENTRATION = re.compile(r"^(?:n|u|µ|mc|m|k)?(?:g|mol|eq|iu|u)/(?:d|m|u|µ)?l$", re.I)
 
 
 @dataclass
@@ -57,6 +61,22 @@ def _matches(variables: list[str]) -> dict[str, tuple[Concept, float]]:
     return out
 
 
+def unit_fits(units: UnitTable, unit: str | None, concept: Concept) -> bool:
+    """Whether a variable recorded in ``unit`` can be the drug ``concept`` at all.
+
+    A concentration under a drug's name is the drug *level* (vancomycin in ug/mL), not the
+    dose or infusion rate the concept stands for, however well the name matches. Other unit
+    differences (mcg/kg/min against mg/kg/h) are left to the unit normalizer, which converts
+    what it can and reports the rest, so only medication concepts are screened here.
+    """
+    if not unit or concept.role != "medication":
+        return True
+    ucum = units.to_ucum(unit) or ""
+    if ucum == concept.ucum or units.conversion(ucum, concept.ucum, concept.name) is not None:
+        return True
+    return not _CONCENTRATION.match(UnitTable.key(ucum))
+
+
 def _fill_for(concept: Concept | None, prof: VariableProfile) -> str:
     if concept:
         return concept.fill
@@ -76,6 +96,10 @@ def suggest(cohort: Cohort, profile: CohortProfile | None = None) -> list[Sugges
     matches = _matches(list(by_name) + interval_vars)
     for v in cohort.config.unmapped:
         matches.pop(v, None)
+    units = load_units()
+    for v, (concept, _) in list(matches.items()):  # a level in ug/mL is not the dose in mg
+        if not unit_fits(units, cfg.variable_units.get(v), concept):
+            matches.pop(v)
     canonical_present = {c.name for c, _ in matches.values()}
 
     # 1. harmonization
@@ -313,13 +337,14 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
     fixes: list[dict[str, Any]] = []
     parse: list[str] = []
     unmap: list[str] = []
-    dedupe = drop_negative = False
+    dedupe = drop_negative = drop_early = False
     for s in suggestions:
         a = s.action or {}
         fixes += [a["fix"]] if "fix" in a else []
         unmap += [a["unmap"]] if "unmap" in a else []
         dedupe = dedupe or bool(a.get("dedupe"))
         drop_negative = drop_negative or a.get("drop_time") == "negative"
+        drop_early = drop_early or a.get("drop_time") == "early"
         parse += [a["parse"]["variable"]] if "parse" in a else []
         renames.update(a.get("rename", {}))
         labels.update(a.get("label", {}))
@@ -347,6 +372,10 @@ def apply_suggestions(cohort: Cohort, suggestions: list[Suggestion]) -> Cohort:
         out = out.dedupe()
     if drop_negative:
         out = out.drop_before_admission()
+    elif drop_early:
+        from dea.quality.checks import EARLY_LEAD_HOURS
+
+        out = out.drop_before_admission(lead_hours=EARLY_LEAD_HOURS)
     for v in parse:
         out = out.parse_numeric_events(v)
     out = out.move_to_static([v for v in to_static if v in cohort.variables])
@@ -404,4 +433,4 @@ def summarize(cohort: Cohort, suggestions: list[Suggestion]) -> pl.DataFrame:
     )
 
 
-__all__ = ["Suggestion", "suggest", "apply_suggestions", "summarize", "ENCOUNTER_ID"]
+__all__ = ["Suggestion", "suggest", "apply_suggestions", "summarize", "unit_fits", "ENCOUNTER_ID"]
