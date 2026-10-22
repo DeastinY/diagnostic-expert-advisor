@@ -34,6 +34,8 @@ export interface CatalogEntry {
 export interface Suggestion {
   id: string; kind: string; title: string; detail: string; action: Record<string, unknown> | null;
   confidence: number; variables: string[]; applicable: boolean; severity: "info" | "warning" | "error" | null;
+  /** For renames: the canonical name with its label, unit, codes and the other local names that join it. */
+  concept?: { name: string; label: string; unit: string; loinc: string; ucum: string; rxnorm: string; atc: string; joins: string[] } | null;
 }
 export interface Check {
   id: string; severity: "info" | "warning" | "error"; title: string; detail: string; variables: string[];
